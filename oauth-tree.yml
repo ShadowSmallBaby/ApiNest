@@ -1,0 +1,126 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - link "Skip to content" [ref=f1e4] [cursor=pointer]:
+        - /url: "#start-of-content"
+      - banner [ref=f1e6]:
+        - heading "Navigation Menu" [level=2] [ref=f1e7]
+        - generic [ref=f1e9]:
+          - button "Toggle navigation" [ref=f1e11] [cursor=pointer]
+          - link "Homepage" [ref=f1e17] [cursor=pointer]:
+            - /url: /
+          - generic [ref=f1e20]:
+            - link "Sign in" [ref=f1e21] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2FQuantumNous%2Fnew-api%2Ftree%2Fmain%2Foauth
+            - button "Appearance settings" [ref=f1e24] [cursor=pointer]
+    - main [ref=f1e28]:
+      - generic [ref=f1e29]:
+        - generic [ref=f1e30]:
+          - generic [ref=f1e32]:
+            - link "QuantumNous" [ref=f1e36] [cursor=pointer]:
+              - /url: /QuantumNous
+            - generic [ref=f1e37]: /
+            - strong [ref=f1e38]:
+              - link "new-api" [ref=f1e39] [cursor=pointer]:
+                - /url: /QuantumNous/new-api
+            - generic [ref=f1e40]: Public
+          - generic [ref=f1e41]:
+            - list:
+              - listitem [ref=f1e42]:
+                - link "You must be signed in to change notification settings" [ref=f1e43] [cursor=pointer]:
+                  - /url: /login?return_to=%2FQuantumNous%2Fnew-api
+              - listitem [ref=f1e46]:
+                - link "Fork 9.8k" [ref=f1e47] [cursor=pointer]:
+                  - /url: /login?return_to=%2FQuantumNous%2Fnew-api
+              - listitem [ref=f1e51]:
+                - link "You must be signed in to star a repository" [ref=f1e53] [cursor=pointer]:
+                  - /url: /login?return_to=%2FQuantumNous%2Fnew-api
+        - navigation "Repository" [ref=f1e57]:
+          - list [ref=f1e58]:
+            - listitem [ref=f1e59]:
+              - link "Code" [ref=f1e60] [cursor=pointer]:
+                - /url: /QuantumNous/new-api
+            - listitem [ref=f1e64]:
+              - link "Issues 600" [ref=f1e65] [cursor=pointer]:
+                - /url: /QuantumNous/new-api/issues
+                - generic [ref=f1e69]: Issues
+                - generic "600" [ref=f1e70]
+            - listitem [ref=f1e71]:
+              - link "Pull requests 412" [ref=f1e72] [cursor=pointer]:
+                - /url: /QuantumNous/new-api/pulls
+                - generic [ref=f1e75]: Pull requests
+                - generic "412" [ref=f1e76]
+            - listitem [ref=f1e77]:
+              - link "Discussions" [ref=f1e78] [cursor=pointer]:
+                - /url: /QuantumNous/new-api/discussions
+            - listitem [ref=f1e82]:
+              - link "Actions" [ref=f1e83] [cursor=pointer]:
+                - /url: /QuantumNous/new-api/actions
+            - listitem [ref=f1e87]:
+              - link "Security and quality 14" [ref=f1e88] [cursor=pointer]:
+                - /url: /QuantumNous/new-api/security
+                - generic [ref=f1e91]: Security and quality
+                - generic "14" [ref=f1e92]
+            - listitem [ref=f1e93]:
+              - link "Insights" [ref=f1e94] [cursor=pointer]:
+                - /url: /QuantumNous/new-api/pulse
+      - generic [ref=f1e108]:
+        - generic [ref=f1e112]:
+          - generic [ref=f1e113]:
+            - heading "Expand file tree" [level=2] [ref=f1e115]:
+              - button "Expand file tree" [ref=f1e116] [cursor=pointer]
+            - button "main branch" [ref=f1e121] [cursor=pointer]:
+              - generic [ref=f1e122]: main
+            - generic [ref=f1e131]:
+              - navigation "Breadcrumbs" [ref=f1e132]:
+                - heading "Breadcrumbs" [level=2] [ref=f1e133]
+                - list [ref=f1e134]
+              - generic [ref=f1e137]:
+                - text: /
+                - heading "oauth" [level=1] [ref=f1e138]
+                - text: /
+              - button "Copy path" [ref=f1e139] [cursor=pointer]
+          - generic [ref=f1e145]:
+            - heading "Directory actions" [level=2] [ref=f1e146]
+            - combobox "Go to file" [ref=f1e153]
+            - heading "More options" [level=2] [ref=f1e154]
+            - button "More options" [ref=f1e155] [cursor=pointer]
+        - generic [ref=f1e158]:
+          - generic [ref=f1e160]:
+            - heading "Latest commit" [level=2] [ref=f1e161]
+            - generic [ref=f1e304]:
+              - generic [ref=f1e306]:
+                - link "seefs001" [ref=f1e307] [cursor=pointer]:
+                  - /url: /seefs001
+                - link "commits by seefs001" [ref=f1e309] [cursor=pointer]:
+                  - /url: /QuantumNous/new-api/commits?author=seefs001
+              - generic [ref=f1e310]:
+                - 'link "fix: normalize generic oauth bearer token type" [ref=f1e313] [cursor=pointer]':
+                  - /url: /QuantumNous/new-api/commit/1911520eba78a9e3d109209b43ca6e805644b94e
+                - button "success" [ref=f1e314] [cursor=pointer]
+            - generic [ref=f1e163]:
+              - generic [ref=f1e318]:
+                - link "Commit 1911520" [ref=f1e319] [cursor=pointer]:
+                  - /url: /QuantumNous/new-api/commit/1911520eba78a9e3d109209b43ca6e805644b94e
+                - text: ·
+                - generic "Mar 20, 2026, 17:07 GMT+8" [ref=f1e320]: Mar 20, 20264 months ago
+              - generic [ref=f1e164]:
+                - heading "History" [level=2] [ref=f1e165]
+                - link "View commit history for this file." [ref=f1e167] [cursor=pointer]:
+                  - /url: /QuantumNous/new-api/commits/main/oauth
+          - generic [ref=f1e170]:
+            - heading "Folders and files" [level=2] [ref=f1e171]
+            - table "Folders and files" [ref=f1e172]:
+              - rowgroup [ref=f1e173]:
+                - row "Name Last commit message Last commit date" [ref=f1e174]
+              - rowgroup [ref=f1e180]:
+                - row "parent directory Parent directory" [ref=f1e181]
+                - 'row "discord.go, (File) refactor: unify OAuth providers with i18n support Feb 5, 20265 months ago" [ref=f1e321]'
+                - 'row "generic.go, (File) fix: normalize generic oauth bearer token type Mar 20, 20264 months ago" [ref=f1e327]'
+                - 'row "github.go, (File) fix(oauth): enhance error handling and transaction management for OAu… Feb 5, 20265 months ago" [ref=f1e333]'
+                - 'row "linuxdo.go, (File) refactor: unify OAuth providers with i18n support Feb 5, 20265 months ago" [ref=f1e339]'
+                - 'row "oidc.go, (File) refactor: unify OAuth providers with i18n support Feb 5, 20265 months ago" [ref=f1e345]'
+                - 'row "provider.go, (File) refactor: unify OAuth providers with i18n support Feb 5, 20265 months ago" [ref=f1e351]'
+                - 'row "registry.go, (File) feat(oauth): implement custom OAuth provider management #1106 Feb 5, 20265 months ago" [ref=f1e357]'
+                - row "types.go, (File) imporve oauth provider UI/UX (#2983) Feb 22, 20265 months ago" [ref=f1e364]
+  - alert [ref=f1e303]

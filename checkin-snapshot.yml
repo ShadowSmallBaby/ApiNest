@@ -1,0 +1,16 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to content" [ref=e4] [cursor=pointer]:
+        - /url: "#start-of-content"
+      - banner [ref=e6]:
+        - heading "Navigation Menu" [level=2] [ref=e7]
+        - generic [ref=e9]
+    - main [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]
+        - navigation "Repository" [ref=e57]
+      - generic [ref=e108]:
+        - generic [ref=e112]
+        - generic [ref=e158]
+  - alert [ref=e309]: While the code is focused, press Alt+F1 for a menu of operations.

@@ -1,0 +1,97 @@
+{
+  "name": "apinest",
+  "version": "0.1.0",
+  "description": "ApiNest MVP desktop app",
+  "private": true,
+  "main": "./dist-electron/main/index.js",
+  "author": "smallbaby",
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "electron-rebuild -f -w better-sqlite3 -w argon2",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3 -w argon2",
+    "dev": "vite",
+    "build": "vite build",
+    "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://127.0.0.1:5173 electron .",
+    "preelectron:dev": "electron-rebuild -f -w better-sqlite3 -w argon2",
+    "electron:dev": "rimraf dist-electron && concurrently -k \"vite --port 5173\" \"wait-on -t 120000 http://127.0.0.1:5173 dist-electron/.electron-ready && npm run start:electron\"",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm rebuild better-sqlite3 argon2",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest --passWithNoTests",
+    "predist": "electron-rebuild -f -w better-sqlite3 -w argon2",
+    "dist": "npm run build && electron-builder --publish never"
+  },
+  "build": {
+    "appId": "com.smallbaby.apinest",
+    "productName": "ApiNest",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/argon2/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icons/png/512x512.png",
+        "to": "build/icons/png/512x512.png"
+      }
+    ],
+    "win": {
+      "icon": "build/icons/win/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "build/icons/mac/icon.icns",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.10",
+    "argon2": "^0.41.1",
+    "better-sqlite3": "^12.8.0",
+    "electron-log": "^5.4.3",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "40.2.1",
+    "electron-builder": "^24.12.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3",
+    "vite-plugin-electron": "^0.29.1",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.1"
+  }
+}
