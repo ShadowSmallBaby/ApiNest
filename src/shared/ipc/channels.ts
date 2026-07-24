@@ -9,8 +9,13 @@ export const IPC_CHANNELS = {
     addAccount: 'sites:add-account',
     syncAccounts: 'sites:sync-accounts',
     checkInAccounts: 'sites:checkin-accounts',
+    batchLogin: 'sites:batch-login',
+    batchCheckIn: 'sites:batch-checkin',
     getSummaries: 'sites:get-summaries',
     openWebsite: 'sites:open-website',
+    getOAuthConfigs: 'sites:get-oauth-configs',
+    upsertOAuthConfig: 'sites:upsert-oauth-config',
+    deleteOAuthConfig: 'sites:delete-oauth-config',
   },
   accounts: {
     list: 'accounts:list',

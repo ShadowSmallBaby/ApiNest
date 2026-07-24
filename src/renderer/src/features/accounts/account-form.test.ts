@@ -1,12 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountRecord } from '../../../../shared/ipc/bridge';
+import type { AccountRecord, AuthIdentity } from '../../../../shared/ipc/bridge';
 import {
   EMPTY_ACCOUNT_FORM,
   accountToFormValues,
+  filterAuthIdentitiesForSite,
   toCreateAccountInput,
   toUpdateAccountInput,
   validateAccountForm,
 } from './account-form';
+
+const identities: AuthIdentity[] = [
+  {
+    id: 'gh-1',
+    kind: 'github',
+    label: 'GH',
+    hasCredential: false,
+    useProxy: false,
+    createdAt: '',
+  },
+  {
+    id: 'ld-1',
+    kind: 'linuxdo',
+    label: 'LD',
+    hasCredential: false,
+    useProxy: false,
+    createdAt: '',
+  },
+  {
+    id: 'pw-1',
+    kind: 'password',
+    label: 'PWD',
+    hasCredential: true,
+    useProxy: false,
+    createdAt: '',
+  },
+];
 
 describe('account-form', () => {
   it('requires an account display name', () => {
@@ -15,6 +43,25 @@ describe('account-form', () => {
 
   it('accepts a valid account-only form', () => {
     expect(validateAccountForm({ displayName: 'Account A', note: '', authId: '' })).toBeNull();
+  });
+
+  it('requires auth when autoLogin is enabled', () => {
+    expect(
+      validateAccountForm({ displayName: 'Account A', note: '', authId: '' }, { requireAuthId: true }),
+    ).toBe('启用自动登录时必须绑定 OAuth 身份（不可使用 CK 认证）。');
+  });
+
+  it('filters auth identities only when autoLogin is enabled', () => {
+    expect(
+      filterAuthIdentitiesForSite(identities, { autoLogin: false, configuredProviders: ['github'] }),
+    ).toEqual({ allowCookie: true, identities });
+
+    const filtered = filterAuthIdentitiesForSite(identities, {
+      autoLogin: true,
+      configuredProviders: ['github'],
+    });
+    expect(filtered.allowCookie).toBe(false);
+    expect(filtered.identities.map(item => item.id)).toEqual(['gh-1']);
   });
 
   it('maps account fields without carrying site configuration', () => {

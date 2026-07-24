@@ -60,6 +60,35 @@ function normalizeTags(tags: string[] | undefined): string[] {
   return result;
 }
 
+/**
+ * 规范化自动登录/签到标志与签到站 URL 互斥关系。
+ * 有 checkInSiteUrl 时强制 autoCheckIn=false。
+ * autoLogin 的 OAuth 前置条件由表单校验；hasOAuthClientId 预留严格路径。
+ */
+function resolveAutoFlags(input: {
+  autoLogin: boolean;
+  autoCheckIn: boolean;
+  checkInSiteUrl?: string;
+  hasOAuthClientId: boolean;
+}): { autoLogin: boolean; autoCheckIn: boolean; checkInSiteUrl?: string } {
+  if (input.autoLogin && !input.hasOAuthClientId) {
+    throw new AppError('INVALID_ARGUMENT', '启用自动登录前请先配置至少一个 OAuth Client ID。');
+  }
+  const checkInSiteUrl = input.checkInSiteUrl;
+  if (checkInSiteUrl) {
+    return {
+      autoLogin: input.autoLogin,
+      autoCheckIn: false,
+      checkInSiteUrl,
+    };
+  }
+  return {
+    autoLogin: input.autoLogin,
+    autoCheckIn: input.autoCheckIn,
+    checkInSiteUrl: undefined,
+  };
+}
+
 function toSiteRecord(entity: SiteEntity, accountCount: number): SiteRecord {
   return {
     id: entity.id,
@@ -72,6 +101,9 @@ function toSiteRecord(entity: SiteEntity, accountCount: number): SiteRecord {
     useProxy: entity.useProxy,
     enabled: entity.enabled,
     tags: entity.tags,
+    autoLogin: entity.autoLogin,
+    autoCheckIn: entity.autoCheckIn,
+    checkInSiteUrl: entity.checkInSiteUrl,
     accountCount,
   };
 }
@@ -122,6 +154,14 @@ export class SiteService {
   create(input: CreateSiteInput): { site: SiteRecord; account: AccountRecord } {
     this.assertAuthExists(input.firstAccount.authId);
     const now = new Date().toISOString();
+    // OAuth 多配置在 create 后由 renderer sync；此处只强制签到站与 autoCheckIn 互斥。
+    // 「autoLogin 须有 OAuth」由表单校验保证（避免仅配 GitHub 时 linuxDoClientId 为空误拒）。
+    const flags = resolveAutoFlags({
+      autoLogin: input.autoLogin ?? false,
+      autoCheckIn: input.autoCheckIn ?? false,
+      checkInSiteUrl: normalizeOptionalText(input.checkInSiteUrl),
+      hasOAuthClientId: true,
+    });
     const site: SiteEntity = {
       id: randomUUID(),
       name: input.name,
@@ -133,6 +173,9 @@ export class SiteService {
       useProxy: input.useProxy ?? false,
       enabled: input.enabled ?? true,
       tags: normalizeTags(input.tags),
+      autoLogin: flags.autoLogin,
+      autoCheckIn: flags.autoCheckIn,
+      checkInSiteUrl: flags.checkInSiteUrl,
       recordVersion: 1,
       createdAt: now,
       updatedAt: now,
@@ -163,21 +206,39 @@ export class SiteService {
   update(siteId: string, input: UpdateSiteInput): SiteRecord {
     const current = this.requireSite(siteId);
     const platform = input.platform ?? current.platform;
+    const nextLinuxDo =
+      input.linuxDoClientId !== undefined
+        ? normalizeOptionalText(input.linuxDoClientId)
+        : current.linuxDoClientId;
+    const nextCheckInUrl =
+      input.checkInSiteUrl !== undefined
+        ? normalizeOptionalText(input.checkInSiteUrl)
+        : current.checkInSiteUrl;
+    const flags = resolveAutoFlags({
+      autoLogin: input.autoLogin ?? current.autoLogin,
+      autoCheckIn: input.autoCheckIn ?? current.autoCheckIn,
+      checkInSiteUrl: nextCheckInUrl,
+      // create/update 时 OAuth 多配置在表单侧同步；此处仅用遗留 linuxDoClientId 兜底。
+      // 严格的「至少有一个 OAuth」由 renderer 表单校验；service 层只强制互斥。
+      hasOAuthClientId: true,
+    });
+    void nextLinuxDo;
     const updated: SiteEntity = {
       ...current,
       name: input.name ?? current.name,
       platform,
       baseUrl: input.baseUrl ? normalizeBaseUrl(input.baseUrl) : current.baseUrl,
       note: input.note !== undefined ? normalizeOptionalText(input.note) : current.note,
-      linuxDoClientId: input.linuxDoClientId !== undefined
-        ? normalizeOptionalText(input.linuxDoClientId)
-        : current.linuxDoClientId,
+      linuxDoClientId: nextLinuxDo,
       routeProfile: platform === 'newapi'
         ? (input.routeProfile ?? current.routeProfile)
         : 'modern',
       useProxy: input.useProxy ?? current.useProxy,
       enabled: input.enabled ?? current.enabled,
       tags: input.tags !== undefined ? normalizeTags(input.tags) : current.tags,
+      autoLogin: flags.autoLogin,
+      autoCheckIn: flags.autoCheckIn,
+      checkInSiteUrl: flags.checkInSiteUrl,
       recordVersion: current.recordVersion + 1,
       updatedAt: new Date().toISOString(),
     };

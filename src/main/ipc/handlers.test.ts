@@ -312,6 +312,112 @@ describe('buildIpcHandlers', () => {
     expect(received).toEqual([[supported.id]]);
   });
 
+  it('plaza batchLogin only targets autoLogin eligible accounts and is locked-gated', async () => {
+    const lockService = createTestLockService();
+    const authId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const received: string[][] = [];
+    const handlers = buildIpcHandlers({
+      lockService,
+      batchLoginOrchestrator: {
+        run: async ids => {
+          received.push(ids);
+          return {
+            total: ids.length,
+            results: ids.map(accountId => ({
+              accountId,
+              authState: 'active' as const,
+              message: 'ok',
+            })),
+          };
+        },
+      },
+      authIdentityRepository: {
+        get: id =>
+          id === authId
+            ? {
+                id: authId,
+                kind: 'github' as const,
+                label: 'GH',
+                hasCredential: false,
+                useProxy: false,
+                createdAt: '',
+              }
+            : null,
+      },
+      siteOAuthConfigRepo: {
+        list: () => [
+          {
+            id: 'cfg',
+            siteId: 'ignored',
+            oauthProvider: 'github' as const,
+            clientId: 'client',
+            createdAt: '',
+            updatedAt: '',
+          },
+        ],
+      } as never,
+    });
+
+    await expect(handlers['sites:batch-login']({})).rejects.toMatchObject({ code: 'LOCKED' });
+    await handlers['auth:unlock']({ masterPassword: 'correct horse battery staple' });
+
+    // 默认创建的站点 autoLogin=false → 无 eligible
+    await createSiteAccount(handlers, 'newapi', 'https://plain.example.com', 'Plain');
+    await expect(handlers['sites:batch-login']({})).resolves.toEqual({ total: 0, results: [] });
+    expect(received).toEqual([[]]);
+
+    // 开启 autoLogin 并绑定匹配 OAuth 身份
+    const created = await handlers['sites:create']({
+      name: 'Auto',
+      platform: 'newapi',
+      baseUrl: 'https://auto.example.com',
+      routeProfile: 'modern',
+      autoLogin: true,
+      firstAccount: { displayName: 'AutoAcc', authId },
+    }) as { site: { id: string }; account: { id: string } };
+
+    await handlers['accounts:link-auth']({ accountId: created.account.id, authId });
+    // 内存 account 默认 authState=unknown，满足「非 active」
+    received.length = 0;
+    await expect(handlers['sites:batch-login']({})).resolves.toMatchObject({ total: 1 });
+    expect(received[0]).toEqual([created.account.id]);
+  });
+
+  it('plaza batchCheckIn only targets autoCheckIn active accounts not checked-in today', async () => {
+    const lockService = createTestLockService();
+    const received: string[][] = [];
+    const handlers = buildIpcHandlers({
+      lockService,
+      batchCheckInOrchestrator: {
+        run: async ids => {
+          received.push(ids);
+          return { total: ids.length, results: [] };
+        },
+      },
+      checkInResultRepository: {
+        listCheckedInAccountIdsToday: () => new Set<string>(),
+      },
+    });
+    await handlers['auth:unlock']({ masterPassword: 'correct horse battery staple' });
+
+    // 无 autoCheckIn 时不入选
+    await createSiteAccount(handlers, 'newapi', 'https://nocheck.example.com', 'NoAuto');
+    await expect(handlers['sites:batch-checkin']({})).resolves.toEqual({ total: 0, results: [] });
+
+    // 开启 autoCheckIn；内存账户 authState=unknown，仍不入选（需 active）
+    await handlers['sites:create']({
+      name: 'Check',
+      platform: 'newapi',
+      baseUrl: 'https://check.example.com',
+      routeProfile: 'modern',
+      autoCheckIn: true,
+      firstAccount: { displayName: 'Chk' },
+    });
+    await expect(handlers['sites:batch-checkin']({})).resolves.toEqual({ total: 0, results: [] });
+    // 收到的两次调用都是空数组
+    expect(received.every(ids => ids.length === 0)).toBe(true);
+  });
+
   it('rejects batch check-in while locked before creating an account snapshot', async () => {
     const lockService = createTestLockService();
     const handlers = buildIpcHandlers({

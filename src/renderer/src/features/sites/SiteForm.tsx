@@ -1,11 +1,22 @@
 import { useState } from 'react';
-import type { AuthIdentity, PlatformDetectionResult, PlatformType, SiteRouteProfile } from '../../../../shared/ipc/bridge';
+import { Switch } from '@headlessui/react';
+import type {
+  AuthIdentity,
+  OAuthProvider,
+  PlatformDetectionResult,
+  PlatformType,
+  SiteRouteProfile,
+} from '../../../../shared/ipc/bridge';
+import { filterAuthIdentitiesForSite } from '../accounts/account-form';
 import {
   SiteFormValues,
   PLATFORM_OPTIONS,
+  OAUTH_PROVIDER_OPTIONS,
   authOptions,
   describeDetectionResult,
+  oauthProviderLabel,
   validateSiteForm,
+  type SiteFormOAuthConfig,
 } from './site-form';
 
 interface SiteFormProps {
@@ -20,30 +31,35 @@ interface SiteFormProps {
 }
 
 /**
- * 站点新增/编辑表单（承载于右侧 slide-over）。
- * 标题由 slide-over header 提供，故本组件不再自带 `<h2>`；
- * 校验/转换沿用 site-form.ts 纯函数，业务契约不变。
+ * 站点新增/编辑表单。
+ *
+ * 核心流程：先输入 URL → 识别 → 成功回填站名/类型，失败则手动填写。
+ * OAuth 配置为站点级多提供商列表（GitHub / LinuxDo），账户认证方式独立选择。
  */
 export function SiteForm(props: SiteFormProps): React.JSX.Element {
   const [values, setValues] = useState(props.initialValues);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [detectionMessage, setDetectionMessage] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [newProvider, setNewProvider] = useState<OAuthProvider | ''>('');
+  const [newClientId, setNewClientId] = useState('');
 
   const detect = async (): Promise<void> => {
-    if (!/^https?:\/\//i.test(values.baseUrl.trim())) {
-      setDetectionMessage('请先填写有效的 HTTP(S) 站点 URL。');
+    const url = values.baseUrl.trim();
+    if (!url || !/^https?:\/\//i.test(url)) {
+      setDetectionMessage('请先填写有效的 HTTP(S) 站点 URL');
       return;
     }
     setDetecting(true);
+    setDetectionMessage(null);
     try {
-      const result = await props.onDetect(values.baseUrl.trim(), values.useProxy);
+      const result = await props.onDetect(url, values.useProxy);
       setDetectionMessage(describeDetectionResult(result));
       if (result.confidence === 'high') {
         setValues(current => ({ ...current, platform: result.platform }));
       }
     } catch {
-      setDetectionMessage('检测请求失败，你仍可手动选择站点类型并继续。');
+      setDetectionMessage('检测请求失败，请手动选择站点类型');
     } finally {
       setDetecting(false);
     }
@@ -64,77 +80,349 @@ export function SiteForm(props: SiteFormProps): React.JSX.Element {
   const set = <K extends keyof SiteFormValues>(key: K, value: SiteFormValues[K]): void =>
     setValues(current => ({ ...current, [key]: value }));
 
+  const availableProviders = OAUTH_PROVIDER_OPTIONS.filter(
+    option => !values.oauthConfigs.some(config => config.provider === option.value),
+  );
+
+  const firstAccountAuthFilter = filterAuthIdentitiesForSite(props.authIdentities, {
+    autoLogin: values.autoLogin,
+    configuredProviders: values.oauthConfigs.map(config => config.provider),
+  });
+
+  const addOAuthConfig = (): void => {
+    if (!newProvider || !newClientId.trim()) return;
+    if (values.oauthConfigs.some(config => config.provider === newProvider)) return;
+    const next: SiteFormOAuthConfig = {
+      provider: newProvider,
+      clientId: newClientId.trim(),
+    };
+    set('oauthConfigs', [...values.oauthConfigs, next]);
+    setNewProvider('');
+    setNewClientId('');
+  };
+
+  const removeOAuthConfig = (provider: OAuthProvider): void => {
+    set(
+      'oauthConfigs',
+      values.oauthConfigs.filter(config => config.provider !== provider),
+    );
+  };
+
+  const updateOAuthClientId = (provider: OAuthProvider, clientId: string): void => {
+    set(
+      'oauthConfigs',
+      values.oauthConfigs.map(config =>
+        config.provider === provider ? { ...config, clientId } : config,
+      ),
+    );
+  };
+
   return (
     <form className="site-form account-form-panel" onSubmit={submit}>
-      <div className="site-form-grid">
-        <label>站名<input value={values.name} disabled={busy} onChange={e => set('name', e.target.value)} /></label>
-        <label>站点类型<select value={values.platform} disabled={busy} onChange={e => set('platform', e.target.value as PlatformType)}>
-          {PLATFORM_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select></label>
-      </div>
-      <label>站点 URL</label>
-      <div className="site-url-row">
-        <input value={values.baseUrl} disabled={busy} placeholder="https://example.com" onChange={e => set('baseUrl', e.target.value)} />
-        <button type="button" className="secondary-button" disabled={busy} onClick={() => void detect()}>{detecting ? '检测中…' : '检测类型'}</button>
-      </div>
-      {detectionMessage ? <p className="hint">{detectionMessage}</p> : null}
-      <label>站点备注（可选）<textarea rows={2} value={values.note} disabled={busy} onChange={e => set('note', e.target.value)} /></label>
+      <section className="site-form-section">
+        <h3 className="site-form-section-title">站点信息</h3>
 
-      <label className="proxy-toggle">
-        <input
-          type="checkbox"
-          checked={values.useProxy}
-          disabled={busy}
-          onChange={e => set('useProxy', e.target.checked)}
-        />
-        使用全局 Proxy（在系统设置中配置；关闭则该站点账户直连）
-      </label>
+        <label>站点 URL</label>
+        <div className="site-url-row">
+          <input
+            value={values.baseUrl}
+            disabled={busy}
+            placeholder="https://example.com"
+            onChange={e => set('baseUrl', e.target.value)}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => void detect()}
+          >
+            {detecting ? '识别中…' : '识别'}
+          </button>
+        </div>
+        {detectionMessage ? <p className="hint">{detectionMessage}</p> : null}
 
-      <label className="proxy-toggle">
-        <input
-          type="checkbox"
-          checked={values.enabled}
-          disabled={busy}
-          onChange={e => set('enabled', e.target.checked)}
-        />
-        启用该站点（关闭后默认从站点广场「仅启用」视图中隐藏）
-      </label>
+        <div className="site-form-grid">
+          <label>
+            站名
+            <input
+              value={values.name}
+              disabled={busy}
+              placeholder="如：主站"
+              onChange={e => set('name', e.target.value)}
+            />
+          </label>
+          <label>
+            站点类型
+            <select
+              value={values.platform}
+              disabled={busy}
+              onChange={e => set('platform', e.target.value as PlatformType)}
+            >
+              {PLATFORM_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
 
-      <label>站点标签（可选，回车添加，至多 12 个）</label>
-      <TagInput tags={values.tags} disabled={busy} onChange={next => set('tags', next)} />
+        <label>
+          站点备注（可选）
+          <textarea
+            rows={2}
+            value={values.note}
+            disabled={busy}
+            placeholder="如：主要用于测试环境"
+            onChange={e => set('note', e.target.value)}
+          />
+        </label>
+      </section>
+
+      <section className="site-form-section">
+        <div className="site-form-switch-row">
+          <div className="site-form-switch-label">
+            <span className="site-form-switch-title">启用该站点</span>
+            <span className="site-form-switch-hint">关闭后默认从站点广场「仅启用」视图中隐藏</span>
+          </div>
+          <Switch
+            checked={values.enabled}
+            onChange={checked => set('enabled', checked)}
+            disabled={busy}
+            className={`site-form-switch ${values.enabled ? 'site-form-switch--on' : 'site-form-switch--off'}`}
+          >
+            <span className="site-form-switch-thumb" />
+          </Switch>
+        </div>
+      </section>
+
+      <section className="site-form-section">
+        <div className="site-form-switch-row">
+          <div className="site-form-switch-label">
+            <span className="site-form-switch-title">使用全局 Proxy</span>
+            <span className="site-form-switch-hint">在系统设置中配置；关闭则该站点账户直连</span>
+          </div>
+          <Switch
+            checked={values.useProxy}
+            onChange={checked => set('useProxy', checked)}
+            disabled={busy}
+            className={`site-form-switch ${values.useProxy ? 'site-form-switch--on' : 'site-form-switch--off'}`}
+          >
+            <span className="site-form-switch-thumb" />
+          </Switch>
+        </div>
+      </section>
+
+      <section className="site-form-section">
+        <div className="site-form-switch-row">
+          <div className="site-form-switch-label">
+            <span className="site-form-switch-title">自动登录</span>
+            <span className="site-form-switch-hint">
+              参与站点广场一键登录；开启后账号须绑定本站已配置的 OAuth 身份
+            </span>
+          </div>
+          <Switch
+            checked={values.autoLogin}
+            onChange={checked => {
+              if (checked && values.oauthConfigs.length === 0) {
+                setErrorMessage('启用自动登录前请先配置至少一个 OAuth Client ID。');
+                return;
+              }
+              setErrorMessage(null);
+              set('autoLogin', checked);
+              if (checked && !values.firstAuthId) {
+                // 禁止 CK：若当前是 CK 则清空，提交时再校验
+                set('firstAuthId', '');
+              }
+            }}
+            disabled={busy}
+            className={`site-form-switch ${values.autoLogin ? 'site-form-switch--on' : 'site-form-switch--off'}`}
+          >
+            <span className="site-form-switch-thumb" />
+          </Switch>
+        </div>
+      </section>
+
+      <section className="site-form-section">
+        <div className="site-form-switch-row">
+          <div className="site-form-switch-label">
+            <span className="site-form-switch-title">自动签到</span>
+            <span className="site-form-switch-hint">
+              {values.checkInSiteUrl.trim()
+                ? '已配置额外签到站，暂不支持自动签到'
+                : '参与站点广场一键 API 签到（非外部签到站）'}
+            </span>
+          </div>
+          <Switch
+            checked={values.autoCheckIn && !values.checkInSiteUrl.trim()}
+            onChange={checked => set('autoCheckIn', checked)}
+            disabled={busy || Boolean(values.checkInSiteUrl.trim())}
+            className={`site-form-switch ${values.autoCheckIn && !values.checkInSiteUrl.trim() ? 'site-form-switch--on' : 'site-form-switch--off'}`}
+          >
+            <span className="site-form-switch-thumb" />
+          </Switch>
+        </div>
+        <label>
+          签到站地址（可选）
+          <input
+            value={values.checkInSiteUrl}
+            disabled={busy}
+            placeholder="https://checkin.example.com（额外签到站时填写）"
+            onChange={e => {
+              const next = e.target.value;
+              setValues(current => ({
+                ...current,
+                checkInSiteUrl: next,
+                // 填写额外签到站时强制关闭自动签到
+                autoCheckIn: next.trim() ? false : current.autoCheckIn,
+              }));
+            }}
+          />
+        </label>
+        <p className="hint">
+          配置后，点签到将在账户会话中打开该地址由用户手动完成；暂不支持一键/自动签到。
+        </p>
+      </section>
+
+      <section className="site-form-section">
+        <label>站点标签（可选，回车添加，至多 12 个）</label>
+        <TagInput tags={values.tags} disabled={busy} onChange={next => set('tags', next)} />
+      </section>
+
+      <section className="site-form-section">
+        <h3 className="site-form-section-title">OAuth 配置（可选）</h3>
+        <p className="site-form-auth-note">
+          同一站点可配置多种 OAuth 提供商；不同账号可分别选择 GitHub / LinuxDo 等方式登录。
+        </p>
+
+        {values.oauthConfigs.length > 0 ? (
+          <div className="site-oauth-list">
+            {values.oauthConfigs.map(config => (
+              <div key={config.provider} className="site-oauth-row">
+                <span className="site-oauth-provider">{oauthProviderLabel(config.provider)}</span>
+                <input
+                  value={config.clientId}
+                  disabled={busy}
+                  placeholder="Client ID"
+                  onChange={e => updateOAuthClientId(config.provider, e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => removeOAuthConfig(config.provider)}
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="hint">尚未配置 OAuth；账号可使用 CK 认证或 Password 凭据。</p>
+        )}
+
+        {availableProviders.length > 0 ? (
+          <div className="site-oauth-add-row">
+            <select
+              value={newProvider}
+              disabled={busy}
+              onChange={e => setNewProvider(e.target.value as OAuthProvider | '')}
+            >
+              <option value="">选择 OAuth 提供商</option>
+              {availableProviders.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <input
+              value={newClientId}
+              disabled={busy || !newProvider}
+              placeholder="Client ID"
+              onChange={e => setNewClientId(e.target.value)}
+            />
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy || !newProvider || !newClientId.trim()}
+              onClick={addOAuthConfig}
+            >
+              添加
+            </button>
+          </div>
+        ) : null}
+      </section>
 
       {values.platform === 'newapi' ? (
-        <>
-          <label>LinuxDo Client ID（可选）<input value={values.linuxDoClientId} disabled={busy} onChange={e => set('linuxDoClientId', e.target.value)} /></label>
-          <label className="compatibility-toggle">
-            <input
-              type="checkbox"
+        <section className="site-form-section">
+          <h3 className="site-form-section-title">NewAPI 配置</h3>
+          <div className="site-form-switch-row">
+            <div className="site-form-switch-label">
+              <span className="site-form-switch-title">兼容旧版 NewAPI UI</span>
+              <span className="site-form-switch-hint">开启后使用 classic 路由，关闭使用 modern 路由</span>
+            </div>
+            <Switch
               checked={values.routeProfile !== 'modern'}
+              onChange={checked => set('routeProfile', (checked ? 'classic' : 'modern') as SiteRouteProfile)}
               disabled={busy}
-              onChange={e => set('routeProfile', (e.target.checked ? 'classic' : 'modern') as SiteRouteProfile)}
-            />
-            兼容旧版 NewAPI UI
-          </label>
-          {values.routeProfile === 'legacy-panel' ? <p className="warning-text">该站点来自历史数据，当前使用 Panel 路由；切换开关后将改用官方新版或 classic 路由。</p> : null}
-        </>
+              className={`site-form-switch ${values.routeProfile !== 'modern' ? 'site-form-switch--on' : 'site-form-switch--off'}`}
+            >
+              <span className="site-form-switch-thumb" />
+            </Switch>
+          </div>
+          {values.routeProfile === 'legacy-panel' ? (
+            <p className="warning-text">该站点来自历史数据，当前使用 Panel 路由；切换开关后将改用官方新版或 classic 路由。</p>
+          ) : null}
+        </section>
       ) : null}
 
       {props.includeFirstAccount ? (
         <fieldset className="site-first-account">
-          <legend>首个账号</legend>
-          <label>账号显示名<input value={values.firstAccountName} disabled={busy} onChange={e => set('firstAccountName', e.target.value)} /></label>
-          <label>账号备注（可选）<textarea rows={2} value={values.firstAccountNote} disabled={busy} onChange={e => set('firstAccountNote', e.target.value)} /></label>
-          <label>绑定认证身份（可选）<select value={values.firstAuthId} disabled={busy} onChange={e => set('firstAuthId', e.target.value)}>
-            <option value="">不绑定</option>
-            {authOptions(props.authIdentities).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select></label>
+          <legend>首个账号配置</legend>
+          <label>
+            账号显示名
+            <input
+              value={values.firstAccountName}
+              disabled={busy}
+              placeholder="如：主账号"
+              onChange={e => set('firstAccountName', e.target.value)}
+            />
+          </label>
+          <label>
+            账号备注（可选）
+            <textarea
+              rows={2}
+              value={values.firstAccountNote}
+              disabled={busy}
+              placeholder="如：用于日常使用"
+              onChange={e => set('firstAccountNote', e.target.value)}
+            />
+          </label>
+          <label>
+            认证方式
+            <select
+              value={values.firstAuthId}
+              disabled={busy}
+              onChange={e => set('firstAuthId', e.target.value)}
+            >
+              {firstAccountAuthFilter.allowCookie ? <option value="">CK 认证</option> : null}
+              {authOptions(firstAccountAuthFilter.identities).map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <p className="hint">
+              {values.autoLogin
+                ? '已启用自动登录：仅可选择本站已配置 OAuth 对应的身份，不可使用 CK。'
+                : 'CK 认证可在账户详情页导入 Cookie；选择 OAuth 身份前请先在上方配置对应 Client ID。'}
+            </p>
+          </label>
         </fieldset>
       ) : null}
 
       {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
       <div className="form-actions">
-        <button type="button" className="secondary-button" onClick={props.onCancel} disabled={busy}>取消</button>
-        <button type="submit" disabled={busy}>{props.submitLabel}</button>
+        <button type="button" className="secondary-button" onClick={props.onCancel} disabled={busy}>
+          取消
+        </button>
+        <button type="submit" disabled={busy}>
+          {props.submitLabel}
+        </button>
       </div>
     </form>
   );
@@ -146,11 +434,6 @@ interface TagInputProps {
   onChange: (tags: string[]) => void;
 }
 
-/**
- * 标签胶囊输入（纯前端小组件，无第三方依赖）。回车/逗号提交新标签，
- * 点击胶囊上的 × 删除。单标签去空白后 1–24 字符、去重、至多 12 个，
- * 与后端 schema/清洗上限一致；超限或重复静默忽略，不打断输入流。
- */
 function TagInput({ tags, disabled, onChange }: TagInputProps): React.JSX.Element {
   const [draft, setDraft] = useState('');
 
@@ -175,7 +458,15 @@ function TagInput({ tags, disabled, onChange }: TagInputProps): React.JSX.Elemen
           {tags.map(tag => (
             <span key={tag} className="site-tag-chip">
               {tag}
-              <button type="button" className="site-tag-remove" disabled={disabled} aria-label={`删除标签 ${tag}`} onClick={() => remove(tag)}>×</button>
+              <button
+                type="button"
+                className="site-tag-remove"
+                disabled={disabled}
+                aria-label={`删除标签 ${tag}`}
+                onClick={() => remove(tag)}
+              >
+                ×
+              </button>
             </span>
           ))}
         </div>

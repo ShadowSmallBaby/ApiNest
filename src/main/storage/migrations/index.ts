@@ -7,6 +7,8 @@ import { networkSettingsMigration } from './006-network-settings';
 import { newApiUserIdentityMigration } from './007-newapi-user-identity';
 import { siteEnabledTagsMigration } from './008-site-enabled-tags';
 import { accountKeysMigration } from './009-account-keys';
+import { siteOAuthConfigsMigration } from './010-site-oauth-configs';
+import { siteAutoLoginCheckinMigration } from './011-site-auto-login-checkin';
 
 export const migrations = [
   initialSchemaMigration,
@@ -18,4 +20,6 @@ export const migrations = [
   newApiUserIdentityMigration,
   siteEnabledTagsMigration,
   accountKeysMigration,
+  siteOAuthConfigsMigration,
+  siteAutoLoginCheckinMigration,
 ];

@@ -15,6 +15,7 @@ import type {
   AuthIdentity,
   AuthStatus,
   BatchCheckInResult,
+  BatchLoginResult,
   CheckInResult,
   DashboardOverview,
   KnownPage,
@@ -26,6 +27,8 @@ import type {
   SiteRecord,
   SiteSummary,
   SiteSyncResult,
+  SiteOAuthConfig,
+  OAuthProvider,
   ViewBounds,
   NetworkSettingsView,
   EmbeddedPageLoadState,
@@ -77,9 +80,27 @@ const bridge: ApiNestBridge = {
       ipcRenderer.invoke(IPC_CHANNELS.sites.syncAccounts, { siteId }) as Promise<SiteSyncResult>,
     checkInAccounts: (siteId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.sites.checkInAccounts, { siteId }) as Promise<BatchCheckInResult>,
+    batchLogin: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.sites.batchLogin, {}) as Promise<BatchLoginResult>,
+    batchCheckIn: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.sites.batchCheckIn, {}) as Promise<BatchCheckInResult>,
     getSummaries: () => ipcRenderer.invoke(IPC_CHANNELS.sites.getSummaries, {}) as Promise<SiteSummary[]>,
     openWebsite: (siteId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.sites.openWebsite, { siteId }) as Promise<void>,
+    getOAuthConfigs: (siteId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sites.getOAuthConfigs, { siteId }) as Promise<SiteOAuthConfig[]>,
+    upsertOAuthConfig: (siteId: string, provider: OAuthProvider, clientId: string, note?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sites.upsertOAuthConfig, {
+        siteId,
+        provider,
+        clientId,
+        note,
+      }) as Promise<void>,
+    deleteOAuthConfig: (siteId: string, provider: OAuthProvider) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sites.deleteOAuthConfig, {
+        siteId,
+        provider,
+      }) as Promise<void>,
   },
   accounts: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.accounts.list) as Promise<AccountRecord[]>,

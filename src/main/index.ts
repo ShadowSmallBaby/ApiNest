@@ -21,6 +21,7 @@ import {
 } from './browser/embedded-page-view';
 import { CheckInService } from './checkin/checkin-service';
 import { BatchCheckInOrchestrator } from './checkin/batch-checkin-orchestrator';
+import { BatchLoginOrchestrator } from './auth/batch-login-orchestrator';
 import { KeysService } from './keys/keys-service';
 import { ModelsService } from './models/models-service';
 import { LogsService } from './logs/logs-service';
@@ -41,6 +42,7 @@ import { SessionPartitionManager } from './auth/session-partition-manager';
 import { IdpCookieSyncService } from './auth/idp-cookie-sync';
 import { CookieImportService } from './auth/cookie-import-service';
 import { LinuxDoHeadlessLogin } from './adapters/newapi/linuxdo-headless-login';
+import { GitHubHeadlessLogin } from './adapters/newapi/github-headless-login';
 import { buildIpcHandlers } from './ipc/handlers';
 import { registerIpcHandlers } from './ipc/register';
 import { WindowControlService } from './window/window-control-service';
@@ -53,6 +55,7 @@ import { CheckInResultRepository } from './storage/repositories/checkin-result-r
 import { AccountRepository } from './storage/repositories/account-repository';
 import { AccountKeysRepository } from './storage/repositories/account-keys-repository';
 import { SiteRepository } from './storage/repositories/site-repository';
+import { SiteOAuthConfigRepository } from './storage/site-oauth-config-repository';
 import { SiteService } from './sites/site-service';
 import { runMigrations } from './storage/run-migrations';
 import { createMainWindow } from './window/create-main-window';
@@ -153,6 +156,7 @@ app.whenReady().then(async () => {
   const authIdentityRepository = new AuthIdentityRepository(database);
   const authStateRepository = new AccountAuthStateRepository(database);
   const accountKeysRepository = new AccountKeysRepository(database);
+  const siteOAuthConfigRepository = new SiteOAuthConfigRepository(database);
 
   // 网络设置（阶段 6）：在任何 Session 创建或联网前，先读取全局 Secure DNS / Proxy 模板，
   // 应用应用级 Host Resolver（可热切换），再装配 partition 级 Proxy 屏障组件。
@@ -302,6 +306,13 @@ app.whenReady().then(async () => {
     refreshAuthState: accountId => authSessionService.refreshAuthState(accountId),
   });
 
+  // GitHub 无头自动登录：state → authorize → /oauth/github 回调写 Cookie。
+  const githubHeadlessLogin = new GitHubHeadlessLogin({
+    sessionClient,
+    siteIdentityStore: authStateRepository,
+    refreshAuthState: accountId => authSessionService.refreshAuthState(accountId),
+  });
+
   const loginFlowService = new LoginFlowService({
     accountRepository,
     adapterRegistry,
@@ -312,6 +323,9 @@ app.whenReady().then(async () => {
     // NewAPI manual 登录时受控捕获站内数字用户 ID（写入 account_auth_state，非凭据）。
     siteIdentityStore: authStateRepository,
     linuxDoHeadlessLogin,
+    githubHeadlessLogin,
+    // 优先从站点级多 OAuth 配置表解析 Client ID。
+    siteOAuthClientIds: siteOAuthConfigRepository,
   });
 
   // 手动导入站点 Cookie 到账户 partition（2026-07-22 主人授权）。
@@ -343,8 +357,13 @@ app.whenReady().then(async () => {
     adapterRegistry,
     operationRepository,
     checkInResultRepository,
+    siteRepository,
+    authIdentityRepository,
+    idpCookieSync,
+    browserContainer,
   });
   const batchCheckInOrchestrator = new BatchCheckInOrchestrator({ checkInService });
+  const batchLoginOrchestrator = new BatchLoginOrchestrator({ loginFlowService });
   const dashboardService = new DashboardService({
     accountService,
     snapshotRepository,
@@ -399,11 +418,15 @@ app.whenReady().then(async () => {
       lockService,
       accountService,
       siteService,
+      siteOAuthConfigRepo: siteOAuthConfigRepository,
       adapterRegistry,
       refreshService,
       snapshotRepository,
       checkInService,
       batchCheckInOrchestrator,
+      batchLoginOrchestrator,
+      checkInResultRepository,
+      authIdentityRepository,
       dashboardService,
       loginFlowService,
       windowControl: windowControlService,

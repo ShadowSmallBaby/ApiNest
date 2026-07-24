@@ -18,6 +18,8 @@ const siteA: SiteRecord = {
   useProxy: false,
   enabled: true,
   tags: [],
+  autoLogin: false,
+  autoCheckIn: false,
 };
 
 const siteB: SiteRecord = {
@@ -30,6 +32,8 @@ const siteB: SiteRecord = {
   useProxy: false,
   enabled: true,
   tags: [],
+  autoLogin: false,
+  autoCheckIn: false,
 };
 
 const accounts: AccountRecord[] = [
@@ -134,7 +138,7 @@ describe('站点卡片广场交互契约', () => {
 
   it('describes platform detection without inventing credentials and supports keyboard open keys', () => {
     expect(describeDetectionResult({ platform: 'newapi', confidence: 'high', reason: 'matched' }))
-      .toContain('很可能是 NewAPI');
+      .toContain('检测到该站点类型为 NewAPI');
     expect(describeDetectionResult({ platform: 'newapi', confidence: 'unknown', reason: 'none' }))
       .toContain('手动选择');
     expect(shouldOpenSiteFromKeyboard('Enter')).toBe(true);

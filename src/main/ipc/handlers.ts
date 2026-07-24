@@ -37,6 +37,8 @@ import {
   createSiteInputSchema,
   siteIdInputSchema,
   sitesListInputSchema,
+  sitesBatchLoginInputSchema,
+  sitesBatchCheckInInputSchema,
   updateSiteRequestSchema,
   listKeysByAccountInputSchema,
   refreshKeysByAccountInputSchema,
@@ -47,6 +49,9 @@ import {
   runTextApiTestInputSchema,
   getNetworkSettingsInputSchema,
   updateNetworkSettingsInputSchema,
+  getOAuthConfigsInputSchema,
+  upsertOAuthConfigInputSchema,
+  deleteOAuthConfigInputSchema,
 } from '../../shared/ipc/schemas';
 import type { AccountService } from '../accounts/account-service';
 import { AdapterRegistry } from '../adapters/adapter-registry';
@@ -57,8 +62,17 @@ import type { CheckInService } from '../checkin/checkin-service';
 import type { BatchCheckInOrchestrator } from '../checkin/batch-checkin-orchestrator';
 import type { DashboardService } from '../dashboard/dashboard-service';
 import type { LoginFlowService } from '../auth/login-flow-service';
+import type { BatchLoginOrchestrator } from '../auth/batch-login-orchestrator';
 import type { SnapshotRepository } from '../storage/repositories/snapshot-repository';
 import type { SiteService } from '../sites/site-service';
+import {
+  resolveSiteOAuthProviders,
+  selectBatchCheckInAccountIds,
+  selectBatchLoginAccountIds,
+} from '../sites/batch-eligibility';
+import type { SiteOAuthConfigRepository } from '../storage/site-oauth-config-repository';
+import type { CheckInResultRepository } from '../storage/repositories/checkin-result-repository';
+import type { AuthIdentityRepository } from '../storage/repositories/auth-identity-repository';
 
 import type {
   AccountPageCapabilities,
@@ -76,6 +90,7 @@ import type {
   AuthLoginTarget,
   AuthState,
   AuthStatus,
+  BatchLoginResult,
   KnownPage,
   LoginResult,
   RefreshResult,
@@ -104,8 +119,11 @@ type IpcRefreshService = Pick<RefreshService, 'refresh'>;
 type IpcSnapshotRepository = Pick<SnapshotRepository, 'getLatest'>;
 type IpcCheckInService = Pick<CheckInService, 'run'>;
 type IpcBatchCheckInOrchestrator = Pick<BatchCheckInOrchestrator, 'run'>;
+type IpcBatchLoginOrchestrator = Pick<BatchLoginOrchestrator, 'run'>;
 type IpcDashboardService = Pick<DashboardService, 'getOverview'>;
 type IpcLoginFlowService = Pick<LoginFlowService, 'open'>;
+type IpcCheckInResultRepository = Pick<CheckInResultRepository, 'listCheckedInAccountIdsToday'>;
+type IpcAuthIdentityRepository = Pick<AuthIdentityRepository, 'get'>;
 
 /** 手动 Cookie 导入端口（主进程写账户 partition）。 */
 export interface CookieImportPort {
@@ -212,11 +230,15 @@ export interface IpcHandlerDependencies {
   lockService?: IpcLockService;
   accountService?: IpcAccountService;
   siteService?: IpcSiteService;
+  siteOAuthConfigRepo?: SiteOAuthConfigRepository;
   adapterRegistry?: IpcAdapterRegistry;
   refreshService?: IpcRefreshService;
   snapshotRepository?: IpcSnapshotRepository;
   checkInService?: IpcCheckInService;
   batchCheckInOrchestrator?: IpcBatchCheckInOrchestrator;
+  batchLoginOrchestrator?: IpcBatchLoginOrchestrator;
+  checkInResultRepository?: IpcCheckInResultRepository;
+  authIdentityRepository?: IpcAuthIdentityRepository;
   dashboardService?: IpcDashboardService;
   loginFlowService?: IpcLoginFlowService;
   cookieImport?: CookieImportPort;
@@ -331,6 +353,9 @@ function createInMemoryServices(): { accountService: IpcAccountService; siteServ
         routeProfile: input.platform === 'newapi' ? input.routeProfile : 'modern',
         useProxy: input.useProxy ?? false,
         enabled: input.enabled ?? true, tags: input.tags ?? [],
+        autoLogin: input.autoLogin ?? false,
+        autoCheckIn: input.checkInSiteUrl?.trim() ? false : (input.autoCheckIn ?? false),
+        checkInSiteUrl: input.checkInSiteUrl?.trim() || undefined,
         accountCount: 0,
       };
       sites.set(site.id, site);
@@ -423,6 +448,9 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
   const snapshotRepository = dependencies.snapshotRepository;
   const checkInService = dependencies.checkInService;
   const batchCheckInOrchestrator = dependencies.batchCheckInOrchestrator;
+  const batchLoginOrchestrator = dependencies.batchLoginOrchestrator;
+  const checkInResultRepository = dependencies.checkInResultRepository;
+  const authIdentityRepository = dependencies.authIdentityRepository;
   const dashboardService = dependencies.dashboardService;
   const loginFlowService = dependencies.loginFlowService;
   const cookieImport = dependencies.cookieImport;
@@ -540,15 +568,91 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
       safeHandle(async () => {
         assertUnlockedForSensitiveOperation(lockService);
         const parsed = siteIdInputSchema.parse(payload);
-        siteService.get(parsed.siteId);
+        const site = siteService.get(parsed.siteId);
         if (!batchCheckInOrchestrator) {
           throw new AppError('NOT_IMPLEMENTED', 'Batch check-in is not available.');
+        }
+        // 外部签到站：只对第一个账户打开一次，避免批量弹窗。
+        if (site.checkInSiteUrl?.trim()) {
+          const accounts = accountService.listBySite(parsed.siteId);
+          const first = accounts[0];
+          if (!first || !checkInService) {
+            return { total: 0, results: [] };
+          }
+          const result = await checkInService.run(first.id);
+          return { total: 1, results: [result] };
         }
         const eligibleIds: string[] = [];
         for (const account of accountService.listBySite(parsed.siteId)) {
           const capabilities = await adapterRegistry.get(account.platform).getCapabilities(toAdapterAccount(account));
           if (capabilities.checkIn) eligibleIds.push(account.id);
         }
+        return batchCheckInOrchestrator.run(eligibleIds);
+      }),
+    [IPC_CHANNELS.sites.batchLogin]: (payload?: unknown) =>
+      safeHandle(async (): Promise<BatchLoginResult> => {
+        assertUnlockedForSensitiveOperation(lockService);
+        sitesBatchLoginInputSchema.parse(payload ?? {});
+        if (!batchLoginOrchestrator) {
+          throw new AppError('NOT_IMPLEMENTED', 'Batch login is not available.');
+        }
+        const sites = siteService.list();
+        const accounts = accountService.list();
+        const identityKindById = new Map(
+          accounts
+            .map(account => account.authRefId)
+            .filter((id): id is string => Boolean(id))
+            .map(authId => {
+              const identity = authIdentityRepository?.get(authId);
+              return identity ? ([authId, identity.kind] as const) : null;
+            })
+            .filter((entry): entry is readonly [string, AuthKind] => entry !== null),
+        );
+        const oauthProvidersBySiteId = new Map(
+          sites.map(site => [
+            site.id,
+            resolveSiteOAuthProviders(
+              site,
+              (dependencies.siteOAuthConfigRepo?.list(site.id) ?? []).map(item => item.oauthProvider),
+            ),
+          ]),
+        );
+        const eligibleIds = selectBatchLoginAccountIds({
+          sites,
+          accounts,
+          identityKindById,
+          oauthProvidersBySiteId,
+        });
+        return batchLoginOrchestrator.run(eligibleIds);
+      }),
+    [IPC_CHANNELS.sites.batchCheckIn]: (payload?: unknown) =>
+      safeHandle(async () => {
+        assertUnlockedForSensitiveOperation(lockService);
+        sitesBatchCheckInInputSchema.parse(payload ?? {});
+        if (!batchCheckInOrchestrator) {
+          throw new AppError('NOT_IMPLEMENTED', 'Batch check-in is not available.');
+        }
+        const sites = siteService.list();
+        const accounts = accountService.list();
+        const todayStart = (() => {
+          const now = new Date();
+          return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        })();
+        const checkedInToday =
+          checkInResultRepository?.listCheckedInAccountIdsToday(todayStart) ?? new Set<string>();
+        const checkInCapableAccountIds = new Set<string>();
+        for (const account of accounts) {
+          const capabilities = await adapterRegistry
+            .get(account.platform)
+            .getCapabilities(toAdapterAccount(account));
+          if (capabilities.checkIn) checkInCapableAccountIds.add(account.id);
+        }
+        const eligibleIds = selectBatchCheckInAccountIds({
+          sites,
+          accounts,
+          checkedInAccountIdsToday: checkedInToday,
+          checkInCapableAccountIds,
+        });
         return batchCheckInOrchestrator.run(eligibleIds);
       }),
     [IPC_CHANNELS.sites.getSummaries]: (payload?: unknown) =>
@@ -564,6 +668,29 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
         // 站点 baseUrl 已在落库前经 normalizeBaseUrl 规范化并限 http/https，可安全外开。
         const site = siteService.get(parsed.siteId);
         await shell.openExternal(site.baseUrl);
+      }),
+    [IPC_CHANNELS.sites.getOAuthConfigs]: (payload: unknown) =>
+      safeHandle(() => {
+        assertUnlockedForSensitiveOperation(lockService);
+        const parsed = getOAuthConfigsInputSchema.parse(payload);
+        return dependencies.siteOAuthConfigRepo?.list(parsed.siteId) ?? [];
+      }),
+    [IPC_CHANNELS.sites.upsertOAuthConfig]: (payload: unknown) =>
+      safeHandle(() => {
+        assertUnlockedForSensitiveOperation(lockService);
+        const parsed = upsertOAuthConfigInputSchema.parse(payload);
+        dependencies.siteOAuthConfigRepo?.upsert(
+          parsed.siteId,
+          parsed.provider,
+          parsed.clientId,
+          parsed.note,
+        );
+      }),
+    [IPC_CHANNELS.sites.deleteOAuthConfig]: (payload: unknown) =>
+      safeHandle(() => {
+        assertUnlockedForSensitiveOperation(lockService);
+        const parsed = deleteOAuthConfigInputSchema.parse(payload);
+        dependencies.siteOAuthConfigRepo?.delete(parsed.siteId, parsed.provider);
       }),
     [IPC_CHANNELS.accounts.list]: () => safeHandle(() => accountService.list()),
     [IPC_CHANNELS.accounts.create]: (payload: unknown) =>

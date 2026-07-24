@@ -66,6 +66,8 @@ export interface AdapterAccount {
   baseUrl: string;
   displayName: string;
   linuxDoClientId?: string;
+  /** 站点级 GitHub OAuth Client ID（来自 site_oauth_configs）。 */
+  githubClientId?: string;
   routeProfile?: SiteRouteProfile;
 }
 

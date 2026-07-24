@@ -18,20 +18,48 @@ export const createSiteAccountInputSchema = z.object({
   authId: z.uuid().nullable().optional(),
 });
 
-export const createSiteInputSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  platform: platformTypeSchema,
-  baseUrl: z.url().max(2048),
-  note: optionalTextSchema(1000),
-  linuxDoClientId: optionalTextSchema(256),
-  routeProfile: siteRouteProfileSchema.default('modern'),
-  // 该站点账户联网是否走全局 Proxy 模板；省略即默认直连，由 service 层兜底为 false。
-  useProxy: z.boolean().optional(),
-  // 站点启用开关；省略即默认启用，由 service 层兜底为 true。
-  enabled: z.boolean().optional(),
-  tags: siteTagsSchema,
-  firstAccount: createSiteAccountInputSchema,
-});
+/** 额外签到站 URL：允许空串（表示清除），非空时须为 http(s)。 */
+const optionalHttpUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .optional()
+  .refine(
+    value => !value || /^https?:\/\//i.test(value),
+    '签到站地址必须以 http:// 或 https:// 开头。',
+  );
+
+export const createSiteInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    platform: platformTypeSchema,
+    baseUrl: z.url().max(2048),
+    note: optionalTextSchema(1000),
+    linuxDoClientId: optionalTextSchema(256),
+    routeProfile: siteRouteProfileSchema.default('modern'),
+    // 该站点账户联网是否走全局 Proxy 模板；省略即默认直连，由 service 层兜底为 false。
+    useProxy: z.boolean().optional(),
+    // 站点启用开关；省略即默认启用，由 service 层兜底为 true。
+    enabled: z.boolean().optional(),
+    tags: siteTagsSchema,
+    // 参与一键登录；省略即默认关闭。
+    autoLogin: z.boolean().optional(),
+    // 参与一键 API 签到；与 checkInSiteUrl 互斥，省略即默认关闭。
+    autoCheckIn: z.boolean().optional(),
+    // 额外签到站；有值时强制不启用 autoCheckIn。
+    checkInSiteUrl: optionalHttpUrlSchema,
+    firstAccount: createSiteAccountInputSchema,
+  })
+  .superRefine((value, ctx) => {
+    const checkInUrl = value.checkInSiteUrl?.trim() ?? '';
+    if (value.autoCheckIn === true && checkInUrl.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: '配置了额外签到站时暂不支持自动签到。',
+        path: ['autoCheckIn'],
+      });
+    }
+  });
 
 export const updateSiteInputSchema = z
   .object({
@@ -44,8 +72,25 @@ export const updateSiteInputSchema = z
     useProxy: z.boolean().optional(),
     enabled: z.boolean().optional(),
     tags: siteTagsSchema,
+    autoLogin: z.boolean().optional(),
+    autoCheckIn: z.boolean().optional(),
+    checkInSiteUrl: optionalHttpUrlSchema,
   })
-  .refine(value => Object.keys(value).length > 0, 'At least one field must be provided.');
+  .refine(value => Object.keys(value).length > 0, 'At least one field must be provided.')
+  .superRefine((value, ctx) => {
+    const checkInUrl = value.checkInSiteUrl?.trim() ?? '';
+    // 仅当同次请求同时带上两者时校验互斥；跨请求合并由 service 层兜底。
+    if (value.autoCheckIn === true && checkInUrl.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: '配置了额外签到站时暂不支持自动签到。',
+        path: ['autoCheckIn'],
+      });
+    }
+  });
+
+export const sitesBatchLoginInputSchema = z.object({});
+export const sitesBatchCheckInInputSchema = z.object({});
 
 export const sitesListInputSchema = z.object({});
 
@@ -56,6 +101,24 @@ export const updateSiteRequestSchema = z.object({
 
 export const siteIdInputSchema = z.object({
   siteId: siteIdSchema,
+});
+
+export const getOAuthConfigsInputSchema = z.object({
+  siteId: siteIdSchema,
+});
+
+export const oauthProviderSchema = z.enum(['github', 'linuxdo']);
+
+export const upsertOAuthConfigInputSchema = z.object({
+  siteId: siteIdSchema,
+  provider: oauthProviderSchema,
+  clientId: z.string().min(1).max(200).trim(),
+  note: z.string().max(500).optional(),
+});
+
+export const deleteOAuthConfigInputSchema = z.object({
+  siteId: siteIdSchema,
+  provider: oauthProviderSchema,
 });
 
 export const addSiteAccountInputSchema = z.object({
@@ -350,6 +413,9 @@ export type CreateSiteInput = z.infer<typeof createSiteInputSchema>;
 export type UpdateSiteInput = z.infer<typeof updateSiteInputSchema>;
 export type CreateSiteAccountInput = z.infer<typeof createSiteAccountInputSchema>;
 export type AddSiteAccountInput = z.infer<typeof addSiteAccountInputSchema>;
+export type GetOAuthConfigsInput = z.infer<typeof getOAuthConfigsInputSchema>;
+export type UpsertOAuthConfigInput = z.infer<typeof upsertOAuthConfigInputSchema>;
+export type DeleteOAuthConfigInput = z.infer<typeof deleteOAuthConfigInputSchema>;
 export type CreateAuthIdentityInput = z.infer<typeof createAuthIdentityInputSchema>;
 export type UpdateAuthIdentityInput = z.infer<typeof updateAuthIdentityInputSchema>;
 export type SaveAuthCredentialInput = z.infer<typeof saveAuthCredentialInputSchema>;

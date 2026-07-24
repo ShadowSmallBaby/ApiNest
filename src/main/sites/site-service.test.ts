@@ -63,10 +63,45 @@ describe('SiteService', () => {
       name: '主站', platform: 'newapi', baseUrl: 'HTTPS://Example.COM', routeProfile: 'modern',
       firstAccount: { displayName: '账号 A', authId },
     });
-    expect(result.site).toMatchObject({ name: '主站', baseUrl: 'https://example.com', routeProfile: 'modern', accountCount: 1 });
+    expect(result.site).toMatchObject({
+      name: '主站',
+      baseUrl: 'https://example.com',
+      routeProfile: 'modern',
+      accountCount: 1,
+      autoLogin: false,
+      autoCheckIn: false,
+    });
     expect(result.account).toMatchObject({ siteId: result.site.id, siteName: '主站', authRefId: authId });
     expect(sites).toHaveLength(1);
     expect(accounts).toHaveLength(1);
+  });
+
+  it('stores autoLogin/autoCheckIn and forces autoCheckIn off when external check-in url is set', () => {
+    const { service } = createHarness();
+    const created = service.create({
+      name: '主站',
+      platform: 'newapi',
+      baseUrl: 'https://example.com',
+      routeProfile: 'modern',
+      autoLogin: true,
+      autoCheckIn: true,
+      checkInSiteUrl: 'https://checkin.example.com',
+      firstAccount: { displayName: '账号 A', authId },
+    });
+    expect(created.site).toMatchObject({
+      autoLogin: true,
+      autoCheckIn: false,
+      checkInSiteUrl: 'https://checkin.example.com',
+    });
+
+    const updated = service.update(created.site.id, {
+      checkInSiteUrl: '',
+      autoCheckIn: true,
+    });
+    expect(updated).toMatchObject({
+      autoCheckIn: true,
+      checkInSiteUrl: undefined,
+    });
   });
 
   it('forces a modern route profile for non-NewAPI sites', () => {
@@ -126,8 +161,8 @@ describe('SiteService', () => {
     const checkedInBySite = new Map([['known', 2]]);
     const { service, sites } = createHarness({ balanceBySite, checkedInBySite });
     // 直接种入两个站点：一个有聚合、一个无聚合，验证 null 与 0 的边界。
-    sites.set('known', { id: 'known', name: '有余额站', platform: 'newapi', baseUrl: 'https://known.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], recordVersion: 1, createdAt: '', updatedAt: '' });
-    sites.set('empty', { id: 'empty', name: '无余额站', platform: 'newapi', baseUrl: 'https://empty.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], recordVersion: 1, createdAt: '', updatedAt: '' });
+    sites.set('known', { id: 'known', name: '有余额站', platform: 'newapi', baseUrl: 'https://known.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], autoLogin: false, autoCheckIn: false, recordVersion: 1, createdAt: '', updatedAt: '' });
+    sites.set('empty', { id: 'empty', name: '无余额站', platform: 'newapi', baseUrl: 'https://empty.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], autoLogin: false, autoCheckIn: false, recordVersion: 1, createdAt: '', updatedAt: '' });
 
     const summaries = service.getSummaries();
 
@@ -140,7 +175,7 @@ describe('SiteService', () => {
     // count=0 表示该站点没有任何可解析的 balance 快照，total 必须降级为 null。
     const balanceBySite = new Map([['s', { total: 0, count: 0 }]]);
     const { service, sites } = createHarness({ balanceBySite });
-    sites.set('s', { id: 's', name: 'S', platform: 'newapi', baseUrl: 'https://s.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], recordVersion: 1, createdAt: '', updatedAt: '' });
+    sites.set('s', { id: 's', name: 'S', platform: 'newapi', baseUrl: 'https://s.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], autoLogin: false, autoCheckIn: false, recordVersion: 1, createdAt: '', updatedAt: '' });
 
     expect(service.getSummaries()).toContainEqual({ siteId: 's', balanceTotal: null, checkedInToday: 0 });
   });

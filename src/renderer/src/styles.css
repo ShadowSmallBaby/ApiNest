@@ -1456,6 +1456,13 @@ h3 {
   margin: 0;
 }
 
+.sites-page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 .sites-page-header .eyebrow {
   margin-bottom: 4px;
 }
@@ -1824,6 +1831,152 @@ h3 {
 
 .site-tag-remove:hover:not(:disabled) {
   background: var(--surface-raised);
+}
+
+/* 站点表单分区与 Switch 样式 */
+.site-form-section {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--stroke-subtle);
+}
+
+.site-form-section:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.site-form-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.site-form-auth-note {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--surface-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.site-form-auth-note strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Switch 行布局 */
+.site-form-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--surface-subtle);
+  border-radius: var(--radius-md);
+}
+
+.site-form-switch-label {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+
+.site-form-switch-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.site-form-switch-hint {
+  font-size: 0.82rem;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+/* Headless UI Switch 组件样式 */
+.site-form-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  border: none;
+  outline: none;
+  padding: 0;
+  vertical-align: middle;
+}
+
+.site-form-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.site-form-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.site-form-switch--off {
+  background: var(--stroke-default);
+}
+
+.site-form-switch--on {
+  background: var(--accent);
+}
+
+.site-form-switch-thumb {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transform: translateX(3px);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  pointer-events: none;
+}
+
+.site-form-switch--on .site-form-switch-thumb {
+  transform: translateX(23px);
+}
+
+.site-form-switch:hover:not(:disabled) .site-form-switch-thumb {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* 站点级多 OAuth 配置列表 */
+.site-oauth-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.site-oauth-row,
+.site-oauth-add-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 140px) minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.site-oauth-provider {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.site-oauth-row input,
+.site-oauth-add-row input,
+.site-oauth-add-row select {
+  width: 100%;
 }
 
 .settings-field {

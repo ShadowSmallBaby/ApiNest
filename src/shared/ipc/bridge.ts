@@ -13,6 +13,9 @@ export type LoginMode = 'auto' | 'manual' | 'linuxdo';
 /** auth 身份类型：github/linuxdo 为分类标签，password 为可跨账户引用的账密凭据。 */
 export type AuthKind = 'github' | 'linuxdo' | 'password';
 
+/** OAuth 提供商类型。 */
+export type OAuthProvider = 'github' | 'linuxdo';
+
 /**
  * auth 身份登录窗体的目标站点。
  * - default：各 IdP 的默认登录起始页（github→github.com、linuxdo→connect.linux.do）
@@ -20,6 +23,17 @@ export type AuthKind = 'github' | 'linuxdo' | 'password';
  * - linuxdoCredit：LinuxDo Credit 站 credit.linux.do（仅 linuxdo 类型）
  */
 export type AuthLoginTarget = 'default' | 'linuxdoMain' | 'linuxdoCredit';
+
+/** 站点级 OAuth 配置（非敏感视图）。 */
+export interface SiteOAuthConfig {
+  id: string;
+  siteId: string;
+  oauthProvider: OAuthProvider;
+  clientId: string;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /** auth 身份的非敏感视图（绝不含任何凭据明文）。 */
 export interface AuthIdentity {
@@ -49,6 +63,21 @@ export interface SiteRecord {
   enabled: boolean;
   /** 站点标签（纯管理性元数据，用于展示与筛选）。 */
   tags: string[];
+  /**
+   * 参与站点广场一键登录；开启后账户须绑定本站已配置的 OAuth 身份（禁止 CK）。
+   * 默认 false。
+   */
+  autoLogin: boolean;
+  /**
+   * 参与站点广场一键 API 签到；与 checkInSiteUrl 互斥。
+   * 默认 false。
+   */
+  autoCheckIn: boolean;
+  /**
+   * 额外签到站完整 URL。配置后签到改为在账户 partition 打开该地址由用户手动完成，
+   * 且暂不支持 autoCheckIn / 一键签到。
+   */
+  checkInSiteUrl?: string;
   accountCount: number;
 }
 
@@ -113,6 +142,18 @@ export interface CheckInResult {
 export interface BatchCheckInResult {
   total: number;
   results: CheckInResult[];
+}
+
+/** 站点广场一键登录的单项结果（串行执行，失败不阻断后续）。 */
+export interface BatchLoginItemResult {
+  accountId: string;
+  authState: AuthState;
+  message: string;
+}
+
+export interface BatchLoginResult {
+  total: number;
+  results: BatchLoginItemResult[];
 }
 
 export interface AuthStatus {
@@ -347,10 +388,31 @@ export interface ApiNestBridge {
     addAccount(siteId: string, input: import('./schemas').CreateSiteAccountInput): Promise<AccountRecord>;
     syncAccounts(siteId: string): Promise<SiteSyncResult>;
     checkInAccounts(siteId: string): Promise<BatchCheckInResult>;
+    /**
+     * 站点广场一键登录：仅处理 enabled && autoLogin 且会话非 active、
+     * 已绑定匹配 OAuth 身份的账号（串行）。
+     */
+    batchLogin(): Promise<BatchLoginResult>;
+    /**
+     * 站点广场一键签到：仅处理 enabled && autoCheckIn 且无外部签到站、
+     * 会话 active、今日未签到、适配器支持签到的账号。
+     */
+    batchCheckIn(): Promise<BatchCheckInResult>;
     /** 站点广场聚合：各站点余额合计与今日签到去重账号数。 */
     getSummaries(): Promise<SiteSummary[]>;
     /** 在系统浏览器打开站点官网（站点 baseUrl，已规范化、限 http/https）。 */
     openWebsite(siteId: string): Promise<void>;
+    /** 获取站点级 OAuth 配置列表（GitHub / LinuxDo 等）。 */
+    getOAuthConfigs(siteId: string): Promise<SiteOAuthConfig[]>;
+    /** 创建或更新指定 OAuth 提供商的 Client ID。 */
+    upsertOAuthConfig(
+      siteId: string,
+      provider: OAuthProvider,
+      clientId: string,
+      note?: string,
+    ): Promise<void>;
+    /** 删除站点上指定 OAuth 提供商配置。 */
+    deleteOAuthConfig(siteId: string, provider: OAuthProvider): Promise<void>;
   };
   accounts: {
     list(): Promise<AccountRecord[]>;

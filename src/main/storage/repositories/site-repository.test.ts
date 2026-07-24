@@ -23,6 +23,8 @@ function createSite(id: string, overrides: Partial<SiteEntity> = {}): SiteEntity
     useProxy: false,
     enabled: true,
     tags: [],
+    autoLogin: false,
+    autoCheckIn: false,
     recordVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,

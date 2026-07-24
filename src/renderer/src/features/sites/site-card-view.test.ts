@@ -11,7 +11,7 @@ import {
 const site: SiteRecord = {
   id: '11111111-1111-4111-8111-111111111111', name: '主站', platform: 'newapi',
   baseUrl: 'https://example.com', routeProfile: 'classic', accountCount: 2, useProxy: false,
-  enabled: true, tags: [],
+  enabled: true, tags: [], autoLogin: false, autoCheckIn: false,
 };
 
 const accounts: AccountRecord[] = [

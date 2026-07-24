@@ -19,6 +19,7 @@ const account = {
 function createService(result: CheckInResult, accountExists = true) {
   const operations: OperationEntity[] = [];
   const storedResults: StoredCheckInResult[] = [];
+  const opened: Array<{ startUrl: string }> = [];
   let calls = 0;
   const service = new CheckInService({
     accountRepository: {
@@ -33,6 +34,7 @@ function createService(result: CheckInResult, accountExists = true) {
           calls += 1;
           return result;
         },
+        getPageUrl: () => new URL('https://newapi.example.com/profile'),
       } as never),
     },
     operationRepository: {
@@ -41,10 +43,16 @@ function createService(result: CheckInResult, accountExists = true) {
     checkInResultRepository: {
       record: stored => storedResults.push(stored),
     },
+    browserContainer: {
+      open: async request => {
+        opened.push({ startUrl: request.startUrl });
+        return {} as never;
+      },
+    },
     now: () => '2026-01-02T00:00:00.000Z',
   });
 
-  return { calls: () => calls, operations, service, storedResults };
+  return { calls: () => calls, opened, operations, service, storedResults };
 }
 
 describe('CheckInService', () => {
@@ -66,6 +74,58 @@ describe('CheckInService', () => {
 
     expect(test.operations[0]).toMatchObject({ status: 'error', errorCode: 'FAILED' });
     expect(test.storedResults[0]).toMatchObject({ result: 'failed' });
+    // API 签到失败后打开站点用户中心，便于手动处理。
+    expect(test.opened).toEqual([{ startUrl: 'https://newapi.example.com/profile' }]);
+  });
+
+  it('opens external check-in site without counting as success', async () => {
+    const operations: OperationEntity[] = [];
+    const storedResults: StoredCheckInResult[] = [];
+    const opened: Array<{ startUrl: string }> = [];
+    const service = new CheckInService({
+      accountRepository: {
+        get: () => ({ ...account, siteId: 'site-1', authRefId: null }),
+      },
+      authStateRepository: { getSiteUserId: () => '42' },
+      adapterRegistry: {
+        get: () => ({ checkIn: async () => ({ accountId: ACCOUNT_ID, result: 'success', message: 'unused' }) } as never),
+      },
+      operationRepository: { record: operation => operations.push(operation) },
+      checkInResultRepository: { record: stored => storedResults.push(stored) },
+      siteRepository: {
+        get: () => ({
+          id: 'site-1',
+          name: 'S',
+          platform: 'newapi',
+          baseUrl: account.baseUrl,
+          routeProfile: 'modern',
+          useProxy: false,
+          enabled: true,
+          tags: [],
+          autoLogin: false,
+          autoCheckIn: false,
+          checkInSiteUrl: 'https://checkin.example.com/path',
+          recordVersion: 1,
+          createdAt: '',
+          updatedAt: '',
+        }),
+      },
+      browserContainer: {
+        open: async request => {
+          opened.push({ startUrl: request.startUrl });
+          return {} as never;
+        },
+      },
+      now: () => '2026-01-02T00:00:00.000Z',
+    });
+
+    await expect(service.run(ACCOUNT_ID)).resolves.toMatchObject({
+      result: 'challenge_required',
+      message: '已打开签到站，请在页面中手动完成签到。',
+    });
+    expect(opened).toEqual([{ startUrl: 'https://checkin.example.com/path' }]);
+    expect(operations[0]?.status).toBe('error');
+    expect(storedResults[0]?.result).toBe('challenge_required');
   });
 
   it('rejects an unknown account before invoking an adapter', async () => {

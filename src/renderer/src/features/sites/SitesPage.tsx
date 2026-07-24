@@ -27,8 +27,10 @@ import { SiteGrid } from './SiteGrid';
 import {
   EMPTY_SITE_FORM,
   siteToFormValues,
+  syncSiteOAuthConfigs,
   toCreateSiteInput,
   toUpdateSiteInput,
+  type SiteFormOAuthConfig,
   type SiteFormValues,
 } from './site-form';
 import {
@@ -45,7 +47,7 @@ const PAGE_TITLES: Record<KnownPage, string> = {
 /** 右侧 slide-over 承载的表单类型；确认交互另由 ConfirmSpec 承载。 */
 type Panel =
   | { kind: 'create-site' }
-  | { kind: 'edit-site' }
+  | { kind: 'edit-site'; oauthConfigs: SiteFormOAuthConfig[]; existingProviders: Array<SiteFormOAuthConfig['provider']> }
   | { kind: 'create-account' }
   | { kind: 'edit-account' };
 
@@ -85,6 +87,8 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
   const [isBusy, setIsBusy] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  /** 当前选中站点已配置的 OAuth 提供商（用于账户表单过滤）。 */
+  const [siteOAuthProviders, setSiteOAuthProviders] = useState<Array<'github' | 'linuxdo'>>([]);
 
   const lastPanel = useRef<Panel | null>(null);
   const lastConfirm = useRef<ConfirmSpec | null>(null);
@@ -126,6 +130,20 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
     return () => { cancelled = true; };
   }, [selectedAccountId]);
 
+  useEffect(() => {
+    if (!selectedSiteId) {
+      setSiteOAuthProviders([]);
+      return;
+    }
+    let cancelled = false;
+    window.apinest.sites.getOAuthConfigs(selectedSiteId).then(configs => {
+      if (!cancelled) setSiteOAuthProviders(configs.map(config => config.oauthProvider));
+    }).catch(() => {
+      if (!cancelled) setSiteOAuthProviders([]);
+    });
+    return () => { cancelled = true; };
+  }, [selectedSiteId]);
+
   const run = async (action: () => Promise<void>): Promise<void> => {
     setIsBusy(true); setErrorMessage(null); setMessage(null);
     try { await action(); } catch (error) { setErrorMessage(getSafeErrorMessage(error)); } finally { setIsBusy(false); }
@@ -142,6 +160,7 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
   const createSite = (values: SiteFormValues): void => {
     void run(async () => {
       const result = await window.apinest.sites.create(toCreateSiteInput(values));
+      await syncSiteOAuthConfigs(result.site.id, values.oauthConfigs, []);
       await load();
       setSelectedSiteId(result.site.id); setSelectedAccountId(result.account.id);
       setPanel(null); setView('detail');
@@ -149,8 +168,31 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
   };
 
   const updateSite = (values: SiteFormValues): void => {
+    if (!selectedSite || panel?.kind !== 'edit-site') return;
+    const existingProviders = panel.existingProviders;
+    void run(async () => {
+      await window.apinest.sites.update(selectedSite.id, toUpdateSiteInput(values));
+      await syncSiteOAuthConfigs(selectedSite.id, values.oauthConfigs, existingProviders);
+      await load();
+      setPanel(null);
+    });
+  };
+
+  const openEditSite = (): void => {
     if (!selectedSite) return;
-    void run(async () => { await window.apinest.sites.update(selectedSite.id, toUpdateSiteInput(values)); await load(); setPanel(null); });
+    void run(async () => {
+      const configs = await window.apinest.sites.getOAuthConfigs(selectedSite.id);
+      const oauthConfigs: SiteFormOAuthConfig[] = configs.map(config => ({
+        provider: config.oauthProvider,
+        clientId: config.clientId,
+        note: config.note,
+      }));
+      setPanel({
+        kind: 'edit-site',
+        oauthConfigs,
+        existingProviders: oauthConfigs.map(config => config.provider),
+      });
+    });
   };
 
   const createAccount = (values: AccountFormValues): void => {
@@ -273,19 +315,106 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
   const panelWidth: SlideOverWidth =
     renderedPanel?.kind === 'create-site' || renderedPanel?.kind === 'edit-site' ? 'lg' : 'md';
 
+  const accountAutoLogin = selectedSite?.autoLogin ?? false;
+  const accountConfiguredProviders =
+    siteOAuthProviders.length > 0
+      ? siteOAuthProviders
+      : selectedSite?.linuxDoClientId
+        ? (['linuxdo'] as Array<'github' | 'linuxdo'>)
+        : [];
+
   const renderPanel = (): React.ReactNode => {
     switch (renderedPanel?.kind) {
       case 'create-site':
         return <SiteForm submitLabel="创建站点" initialValues={EMPTY_SITE_FORM} authIdentities={authIdentities} includeFirstAccount isBusy={isBusy} onDetect={window.apinest.sites.detectPlatform} onSubmit={createSite} onCancel={() => setPanel(null)} />;
       case 'edit-site':
-        return selectedSite ? <SiteForm submitLabel="保存" initialValues={siteToFormValues(selectedSite)} authIdentities={authIdentities} includeFirstAccount={false} isBusy={isBusy} onDetect={window.apinest.sites.detectPlatform} onSubmit={updateSite} onCancel={() => setPanel(null)} /> : null;
+        return selectedSite && renderedPanel.kind === 'edit-site' ? (
+          <SiteForm
+            submitLabel="保存"
+            initialValues={siteToFormValues(selectedSite, renderedPanel.oauthConfigs)}
+            authIdentities={authIdentities}
+            includeFirstAccount={false}
+            isBusy={isBusy}
+            onDetect={window.apinest.sites.detectPlatform}
+            onSubmit={updateSite}
+            onCancel={() => setPanel(null)}
+          />
+        ) : null;
       case 'create-account':
-        return <AccountForm submitLabel="添加" initialValues={EMPTY_ACCOUNT_FORM} authIdentities={authIdentities} isBusy={isBusy} onSubmit={createAccount} onCancel={() => setPanel(null)} />;
+        return (
+          <AccountForm
+            submitLabel="添加"
+            initialValues={EMPTY_ACCOUNT_FORM}
+            authIdentities={authIdentities}
+            autoLogin={accountAutoLogin}
+            configuredProviders={accountConfiguredProviders}
+            isBusy={isBusy}
+            onSubmit={createAccount}
+            onCancel={() => setPanel(null)}
+          />
+        );
       case 'edit-account':
-        return selectedAccount ? <AccountForm submitLabel="保存" initialValues={accountToFormValues(selectedAccount)} authIdentities={authIdentities} isBusy={isBusy} onSubmit={updateAccount} onCancel={() => setPanel(null)} /> : null;
+        return selectedAccount ? (
+          <AccountForm
+            submitLabel="保存"
+            initialValues={accountToFormValues(selectedAccount)}
+            authIdentities={authIdentities}
+            autoLogin={accountAutoLogin}
+            configuredProviders={accountConfiguredProviders}
+            isBusy={isBusy}
+            onSubmit={updateAccount}
+            onCancel={() => setPanel(null)}
+          />
+        ) : null;
       default:
         return null;
     }
+  };
+
+  const batchLoginPlaza = (): void => {
+    setConfirm({
+      title: '一键登录',
+      message: '确认对已启用且开启自动登录、会话失效并绑定匹配 OAuth 身份的账号执行登录？',
+      detail: '将串行自动登录，可能打开登录窗口；单项失败不会中断其余账号。',
+      confirmLabel: '开始登录',
+      onConfirm: () => {
+        setConfirm(null);
+        void run(async () => {
+          const result = await window.apinest.sites.batchLogin();
+          if (result.total === 0) {
+            setMessage('没有符合条件的账号（需：站点启用 + 自动登录 + 会话非有效 + 已绑定匹配 OAuth）。');
+            return;
+          }
+          const ok = result.results.filter(item => item.authState === 'active').length;
+          setMessage(`一键登录完成：成功 ${ok}，共 ${result.total} 个。`);
+          await load();
+        });
+      },
+    });
+  };
+
+  const batchCheckInPlaza = (): void => {
+    setConfirm({
+      title: '一键签到',
+      message: '确认对已启用且开启自动签到、会话有效、今日未签到的账号执行签到？',
+      detail: '仅处理 API 签到站点；配置了额外签到站的站点不会进入一键签到。',
+      confirmLabel: '开始签到',
+      onConfirm: () => {
+        setConfirm(null);
+        void run(async () => {
+          const result = await window.apinest.sites.batchCheckIn();
+          if (result.total === 0) {
+            setMessage('没有符合条件的账号（需：站点启用 + 自动签到 + 无外部签到站 + 会话有效 + 今日未签到）。');
+            return;
+          }
+          const ok = result.results.filter(
+            item => item.result === 'success' || item.result === 'already_checked_in',
+          ).length;
+          setMessage(`一键签到完成：成功/已签到 ${ok}，共 ${result.total} 个。`);
+          await load();
+        });
+      },
+    });
   };
 
   // 站点广场筛选：过滤后的站点列表 + 可选标签集合（来自全部站点，去重保序）。
@@ -301,7 +430,7 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
           selectedAccountId={selectedAccountId}
           isBusy={isBusy}
           onBack={() => setView('grid')}
-          onEdit={() => setPanel({ kind: 'edit-site' })}
+          onEdit={openEditSite}
           onDelete={() => deleteSite(selectedSite)}
           onAddAccount={() => setPanel({ kind: 'create-account' })}
           onSelectAccount={id => setSelectedAccountId(id)}
@@ -352,7 +481,11 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
         <section className="sites-page">
           <div className="sites-page-header">
             <h2>站点广场</h2>
-            <button type="button" disabled={isBusy} onClick={() => setPanel({ kind: 'create-site' })}>＋ 新增站点</button>
+            <div className="sites-page-header-actions">
+              <button type="button" className="secondary-button" disabled={isBusy} onClick={batchLoginPlaza}>一键登录</button>
+              <button type="button" className="secondary-button" disabled={isBusy} onClick={batchCheckInPlaza}>一键签到</button>
+              <button type="button" disabled={isBusy} onClick={() => setPanel({ kind: 'create-site' })}>＋ 新增站点</button>
+            </div>
           </div>
           <div className="sites-toolbar">
             <input
@@ -402,7 +535,22 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
           </div>
           {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
           {message ? <p className="hint">{message}</p> : null}
-          <SiteGrid sites={visibleSites} accounts={accounts} summaries={summaries} isBusy={isBusy} onOpen={openSite} onEdit={site => { setSelectedSiteId(site.id); setPanel({ kind: 'edit-site' }); }} onSync={syncSite} onCheckIn={checkInSite} onDelete={deleteSite} onOpenWebsite={openWebsite} />
+          <SiteGrid sites={visibleSites} accounts={accounts} summaries={summaries} isBusy={isBusy} onOpen={openSite} onEdit={site => {
+              setSelectedSiteId(site.id);
+              void run(async () => {
+                const configs = await window.apinest.sites.getOAuthConfigs(site.id);
+                const oauthConfigs: SiteFormOAuthConfig[] = configs.map(config => ({
+                  provider: config.oauthProvider,
+                  clientId: config.clientId,
+                  note: config.note,
+                }));
+                setPanel({
+                  kind: 'edit-site',
+                  oauthConfigs,
+                  existingProviders: oauthConfigs.map(config => config.provider),
+                });
+              });
+            }} onSync={syncSite} onCheckIn={checkInSite} onDelete={deleteSite} onOpenWebsite={openWebsite} />
         </section>
       )}
 

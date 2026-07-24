@@ -13,8 +13,14 @@ export function normalizeBaseUrl(input: string): string {
     url.pathname = '/';
   }
 
-  // 去掉根路径的尾随斜杠：仅当路径为根 '/' 且无 query 时截断，
-  // 使 `https://x.com/` 归一化为 `https://x.com`；非根路径（含子路径）保留原样。
+  // 去掉所有路径的尾随斜杠（包括根路径和子路径），使 URL 归一化更统一。
+  // `https://x.com/` → `https://x.com`
+  // `https://x.com/api/` → `https://x.com/api`
+  if (url.pathname.endsWith('/') && url.pathname.length > 1) {
+    url.pathname = url.pathname.slice(0, -1);
+  }
+
+  // 特殊处理：根路径且无 query 时直接拼接，避免 `https://x.com/?` 的尾随问号
   if (url.pathname === '/' && url.search === '') {
     return `${url.protocol}//${url.host}`;
   }

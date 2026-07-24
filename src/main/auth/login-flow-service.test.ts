@@ -66,7 +66,7 @@ function createService(
         if (overrides.syncThrows) {
           throw new Error('sync failed');
         }
-        return { copied: 1 };
+        return { copied: 1, skipped: [] };
       },
     },
   });

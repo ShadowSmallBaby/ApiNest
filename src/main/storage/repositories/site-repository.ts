@@ -15,6 +15,12 @@ export interface SiteEntity {
   enabled: boolean;
   /** 站点标签（纯管理性元数据，用于展示与筛选）。 */
   tags: string[];
+  /** 参与广场一键登录；默认 false。 */
+  autoLogin: boolean;
+  /** 参与广场一键 API 签到；与 checkInSiteUrl 互斥；默认 false。 */
+  autoCheckIn: boolean;
+  /** 额外签到站 URL；有值时签到改为打开该地址手动完成。 */
+  checkInSiteUrl?: string;
   recordVersion: number;
   createdAt: string;
   updatedAt: string;
@@ -43,6 +49,9 @@ function mapSiteRow(row: Record<string, unknown>): SiteEntity {
     useProxy: Number(row.use_proxy) === 1,
     enabled: Number(row.enabled) === 1,
     tags: parseTags(row.tags_json),
+    autoLogin: Number(row.auto_login) === 1,
+    autoCheckIn: Number(row.auto_checkin) === 1,
+    checkInSiteUrl: row.check_in_site_url ? String(row.check_in_site_url) : undefined,
     recordVersion: Number(row.record_version),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -53,15 +62,17 @@ export class SiteRepository {
   constructor(private readonly database: Database.Database) {}
 
   create(entity: SiteEntity): void {
-    const { tags, enabled, useProxy, note, linuxDoClientId, ...rest } = entity;
+    const { tags, enabled, useProxy, autoLogin, autoCheckIn, note, linuxDoClientId, checkInSiteUrl, ...rest } = entity;
     this.database
       .prepare(
         `INSERT INTO sites (
           id, name, platform, base_url, note, linuxdo_client_id, route_profile,
-          use_proxy, enabled, tags_json, record_version, created_at, updated_at
+          use_proxy, enabled, tags_json, auto_login, auto_checkin, check_in_site_url,
+          record_version, created_at, updated_at
         ) VALUES (
           @id, @name, @platform, @baseUrl, @note, @linuxDoClientId, @routeProfile,
-          @useProxy, @enabled, @tagsJson, @recordVersion, @createdAt, @updatedAt
+          @useProxy, @enabled, @tagsJson, @autoLogin, @autoCheckIn, @checkInSiteUrl,
+          @recordVersion, @createdAt, @updatedAt
         )`,
       )
       .run({
@@ -71,6 +82,9 @@ export class SiteRepository {
         useProxy: useProxy ? 1 : 0,
         enabled: enabled ? 1 : 0,
         tagsJson: JSON.stringify(tags),
+        autoLogin: autoLogin ? 1 : 0,
+        autoCheckIn: autoCheckIn ? 1 : 0,
+        checkInSiteUrl: checkInSiteUrl ?? null,
       });
   }
 
@@ -87,7 +101,7 @@ export class SiteRepository {
   }
 
   update(entity: SiteEntity): void {
-    const { tags, enabled, useProxy, note, linuxDoClientId, ...rest } = entity;
+    const { tags, enabled, useProxy, autoLogin, autoCheckIn, note, linuxDoClientId, checkInSiteUrl, ...rest } = entity;
     this.database
       .prepare(
         `UPDATE sites SET
@@ -100,6 +114,9 @@ export class SiteRepository {
           use_proxy = @useProxy,
           enabled = @enabled,
           tags_json = @tagsJson,
+          auto_login = @autoLogin,
+          auto_checkin = @autoCheckIn,
+          check_in_site_url = @checkInSiteUrl,
           record_version = @recordVersion,
           updated_at = @updatedAt
         WHERE id = @id`,
@@ -111,6 +128,9 @@ export class SiteRepository {
         useProxy: useProxy ? 1 : 0,
         enabled: enabled ? 1 : 0,
         tagsJson: JSON.stringify(tags),
+        autoLogin: autoLogin ? 1 : 0,
+        autoCheckIn: autoCheckIn ? 1 : 0,
+        checkInSiteUrl: checkInSiteUrl ?? null,
       });
   }
 

@@ -62,4 +62,19 @@ export class CheckInResultRepository {
     }
     return result;
   }
+
+  /**
+   * 返回今日已成功签到（success / already_checked_in）的账户 ID 集合。
+   * 用于广场一键签到筛选「今日未签到」账户。
+   */
+  listCheckedInAccountIdsToday(todayStartIso: string): Set<string> {
+    const rows = this.database.prepare(
+      `SELECT DISTINCT account_id AS account_id
+       FROM checkin_results
+       WHERE checked_at >= ?
+         AND result IN ('success', 'already_checked_in')`,
+    ).all(todayStartIso) as Array<{ account_id: string }>;
+
+    return new Set(rows.map(row => String(row.account_id)));
+  }
 }

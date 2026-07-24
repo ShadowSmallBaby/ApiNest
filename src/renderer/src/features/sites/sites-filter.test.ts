@@ -10,6 +10,8 @@ function site(overrides: Partial<SiteRecord> & Pick<SiteRecord, 'id' | 'name'>):
     useProxy: false,
     enabled: true,
     tags: [],
+    autoLogin: false,
+    autoCheckIn: false,
     accountCount: 1,
     ...overrides,
   };

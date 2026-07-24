@@ -22,7 +22,7 @@ export interface ElectronSessionRequestClientDependencies {
  * - follow：session.fetch
  * - manual：net.request + redirect 事件（fetch manual 会抛 Redirect was cancelled）
  *
- * 调试期（APINEST_OAUTH_DEBUG）输出完整 URL / 头 / body / Set-Cookie / 分区 Cookie 列表。
+ * APINEST_OAUTH_DEBUG 开启时输出请求/响应细节（仅本地排查）。
  */
 export class ElectronSessionRequestClient implements SessionRequestClient {
   constructor(private readonly deps: ElectronSessionRequestClientDependencies) {}

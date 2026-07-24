@@ -11,8 +11,10 @@ describe('normalizeBaseUrl', () => {
     );
   });
 
-  it('keeps non-root trailing slashes and path casing intact', () => {
-    expect(normalizeBaseUrl('https://Example.com/Api/V1/')).toBe('https://example.com/Api/V1/');
+  it('removes trailing slashes from all paths including sub-paths', () => {
+    expect(normalizeBaseUrl('https://Example.com/Api/V1/')).toBe('https://example.com/Api/V1');
+    expect(normalizeBaseUrl('https://example.com/')).toBe('https://example.com');
+    expect(normalizeBaseUrl('https://example.com/api/')).toBe('https://example.com/api');
   });
 
   it('rejects unsupported protocols', () => {

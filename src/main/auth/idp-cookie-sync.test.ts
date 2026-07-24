@@ -63,6 +63,7 @@ describe('IdpCookieSyncService', () => {
     });
 
     expect(result.copied).toBe(1);
+    expect(result.skipped).toEqual([]);
     expect(account.sets).toHaveLength(1);
     expect(account.sets[0]).toMatchObject({
       name: 'user_session',
@@ -73,6 +74,57 @@ describe('IdpCookieSyncService', () => {
     });
     expect(account.sets[0].url).toContain('github.com');
     expect(JSON.stringify(result)).not.toContain('secret-a');
+  });
+
+  it('strips domain for __Host- cookies and continues after a set failure', async () => {
+    const auth = makeSession([
+      {
+        name: '__Host-user_session_same_site',
+        value: 'host-secret',
+        domain: '.github.com',
+        path: '/',
+        secure: true,
+        httpOnly: true,
+        expirationDate: 4_000_000_000,
+      },
+      {
+        name: 'user_session',
+        value: 'normal-secret',
+        domain: '.github.com',
+        path: '/',
+        secure: true,
+        expirationDate: 4_000_000_000,
+      },
+    ]);
+    const account = makeSession();
+    const originalSet = account.session.cookies.set.bind(account.session.cookies);
+    account.session.cookies.set = async details => {
+      if ((details.name ?? '').startsWith('__Host-') && details.domain) {
+        throw new Error('EXCLUDE_INVALID_PREFIX');
+      }
+      return originalSet(details);
+    };
+
+    const service = new IdpCookieSyncService({
+      partitionManager: {
+        getAuthSession: () => auth.session,
+        getAccountSession: () => account.session,
+      },
+      nowSeconds: () => 1_700_000_000,
+    });
+
+    const result = await service.syncLinkedIdpCookies({
+      accountId: 'account-a',
+      authId: 'auth-a',
+      kind: 'github',
+    });
+
+    expect(result.copied).toBe(2);
+    const hostCookie = account.sets.find(item => (item.name ?? '').startsWith('__Host-'));
+    expect(hostCookie?.domain).toBeUndefined();
+    expect(hostCookie?.path).toBe('/');
+    expect(hostCookie?.secure).toBe(true);
+    expect(hostCookie?.url.startsWith('https://')).toBe(true);
   });
 
   it('skips expired cookies and copies linuxdo allowlisted hosts', async () => {
@@ -128,7 +180,7 @@ describe('IdpCookieSyncService', () => {
         authId: 'auth-a',
         kind: 'github',
       }),
-    ).resolves.toEqual({ copied: 0 });
+    ).resolves.toEqual({ copied: 0, skipped: [] });
     expect(account.sets).toHaveLength(0);
   });
 });

@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import type { AuthIdentity } from '../../../../shared/ipc/bridge';
+import type { AuthIdentity, OAuthProvider } from '../../../../shared/ipc/bridge';
 import {
   AccountFormValues,
   authIdentityLabel,
+  filterAuthIdentitiesForSite,
   validateAccountForm,
 } from './account-form';
 
@@ -10,6 +11,10 @@ interface AccountFormProps {
   submitLabel: string;
   initialValues: AccountFormValues;
   authIdentities: AuthIdentity[];
+  /** 站点是否开启自动登录；开启后禁止 CK 并过滤 OAuth 身份。 */
+  autoLogin?: boolean;
+  /** 站点已配置的 OAuth 提供商列表（autoLogin 时用于过滤）。 */
+  configuredProviders?: OAuthProvider[];
   isBusy: boolean;
   onSubmit: (values: AccountFormValues) => void;
   onCancel: () => void;
@@ -23,6 +28,8 @@ export function AccountForm({
   submitLabel,
   initialValues,
   authIdentities,
+  autoLogin = false,
+  configuredProviders = [],
   isBusy,
   onSubmit,
   onCancel,
@@ -30,9 +37,14 @@ export function AccountForm({
   const [values, setValues] = useState<AccountFormValues>(initialValues);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const authFilter = filterAuthIdentitiesForSite(authIdentities, {
+    autoLogin,
+    configuredProviders,
+  });
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    const validationError = validateAccountForm(values);
+    const validationError = validateAccountForm(values, { requireAuthId: autoLogin });
     if (validationError) {
       setErrorMessage(validationError);
       return;
@@ -62,20 +74,25 @@ export function AccountForm({
         onChange={event => setValues(current => ({ ...current, note: event.target.value }))}
       />
 
-      <label htmlFor="account-auth">绑定认证身份（可选）</label>
+      <label htmlFor="account-auth">认证方式</label>
       <select
         id="account-auth"
         value={values.authId}
         disabled={isBusy}
         onChange={event => setValues(current => ({ ...current, authId: event.target.value }))}
       >
-        <option value="">不绑定</option>
-        {authIdentities.map(identity => (
+        {authFilter.allowCookie ? <option value="">CK 认证</option> : null}
+        {authFilter.identities.map(identity => (
           <option key={identity.id} value={identity.id}>
             {authIdentityLabel(identity)}
           </option>
         ))}
       </select>
+      <p className="hint">
+        {autoLogin
+          ? '站点已启用自动登录：仅可选择本站已配置 OAuth 对应的身份，不可使用 CK。'
+          : 'CK 认证可在账户详情页导入 Cookie；OAuth 身份依赖站点已配置的对应 Client ID。'}
+      </p>
 
       {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
 
