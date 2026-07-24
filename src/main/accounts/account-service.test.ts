@@ -57,8 +57,8 @@ describe('AccountService', () => {
       });
 
       expect(first.id).not.toBe(second.id);
-      expect(first.baseUrl).toBe('https://example.com/');
-      expect(second.baseUrl).toBe('https://example.com/');
+      expect(first.baseUrl).toBe('https://example.com');
+      expect(second.baseUrl).toBe('https://example.com');
       expect(service.list()).toHaveLength(2);
     } finally {
       cleanup();

@@ -12,8 +12,8 @@ function model(overrides: Partial<ModelRecord> = {}): ModelRecord {
 describe('api test view selections', () => {
   it('filters newapi sites, accounts and available models', () => {
     const sites: SiteRecord[] = [
-      { id: 's1', name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false },
-      { id: 's2', name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false },
+      { id: 's1', name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
+      { id: 's2', name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
     ];
     expect(testCapableSites(sites).map(item => item.id)).toEqual(['s1']);
     expect(accountsForSite([account('a', 's1'), account('b', 's2')], 's1').map(item => item.id)).toEqual(['a']);

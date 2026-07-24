@@ -3,9 +3,12 @@ import {
   accountsForSite,
   describeKeyStatus,
   describeQuota,
+  flattenKeyRows,
+  formatKeyTime,
   keyCapableSites,
   loadAccountsKeys,
   reconcileFilters,
+  syncableAccounts,
   targetAccounts,
 } from './keys-view';
 
@@ -80,8 +83,8 @@ describe('reconcileFilters', () => {
 describe('keyCapableSites', () => {
   it('keeps only newapi sites', () => {
     const sites: SiteRecord[] = [
-      { id: SITE_A, name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false },
-      { id: SITE_B, name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false },
+      { id: SITE_A, name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
+      { id: SITE_B, name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
     ];
     expect(keyCapableSites(sites).map(s => s.id)).toEqual([SITE_A]);
   });
@@ -118,6 +121,7 @@ describe('loadAccountsKeys', () => {
     status: 1,
     createdTime: 0,
     expiredTime: -1,
+    hasPlaintext: false,
   });
 
   it('returns loaded results for every account on success', async () => {
@@ -144,5 +148,78 @@ describe('loadAccountsKeys', () => {
       throw new Error('x');
     });
     expect(results.map(r => r.status)).toEqual(['error', 'error']);
+  });
+});
+
+describe('flattenKeyRows', () => {
+  const makeKey = (id: number, accountId: string): ApiKeyRecord => ({
+    id,
+    accountId,
+    name: `k${id}`,
+    maskedKey: 'sk-…abcd',
+    remainQuota: 0,
+    unlimitedQuota: false,
+    usedQuota: 0,
+    status: 1,
+    createdTime: 0,
+    expiredTime: -1,
+    hasPlaintext: false,
+  });
+
+  it('flattens loaded accounts into rows carrying a site·account label', () => {
+    const acct = account('a1', SITE_A);
+    const rows = flattenKeyRows([
+      { account: acct, status: 'loaded', keys: [makeKey(1, 'a1'), makeKey(2, 'a1')] },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].siteAccountLabel).toBe(`${SITE_A} · a1`);
+    expect(rows.map(r => r.key.id)).toEqual([1, 2]);
+  });
+
+  it('skips error accounts and keeps loaded ones', () => {
+    const rows = flattenKeyRows([
+      { account: account('a1', SITE_A), status: 'error', keys: [], error: new Error('x') },
+      { account: account('a2', SITE_A), status: 'loaded', keys: [makeKey(3, 'a2')] },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].key.id).toBe(3);
+  });
+});
+
+describe('formatKeyTime', () => {
+  it('returns a dash for non-positive or non-finite values', () => {
+    expect(formatKeyTime(0)).toBe('—');
+    expect(formatKeyTime(-1)).toBe('—');
+    expect(formatKeyTime(Number.NaN)).toBe('—');
+  });
+
+  it('formats a positive unix-seconds timestamp', () => {
+    expect(formatKeyTime(1_700_000_000)).toBe(new Date(1_700_000_000 * 1000).toLocaleString());
+  });
+});
+
+describe('syncableAccounts', () => {
+  const withState = (id: string, authState: AccountRecord['authState']): AccountRecord => ({
+    ...account(id, SITE_A),
+    authState,
+  });
+
+  it('keeps active and unknown accounts', () => {
+    const accounts = [withState('a1', 'active'), withState('a2', 'unknown')];
+    expect(syncableAccounts(accounts).map(a => a.id)).toEqual(['a1', 'a2']);
+  });
+
+  it('drops expired and error accounts (no point syncing invalid sessions)', () => {
+    const accounts = [
+      withState('a1', 'active'),
+      withState('a2', 'expired'),
+      withState('a3', 'error'),
+    ];
+    expect(syncableAccounts(accounts).map(a => a.id)).toEqual(['a1']);
+  });
+
+  it('returns an empty list when every account is invalid', () => {
+    const accounts = [withState('a1', 'expired'), withState('a2', 'error')];
+    expect(syncableAccounts(accounts)).toEqual([]);
   });
 });

@@ -60,6 +60,7 @@ describe('parseNewApiTokens', () => {
         status: 1,
         createdTime: 1700000000,
         expiredTime: -1,
+        hasPlaintext: false,
       },
     ]);
   });

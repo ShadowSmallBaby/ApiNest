@@ -6,6 +6,7 @@ import type {
   AccountSnapshot,
   ApiKeyRecord,
   ApiNestBridge,
+  CaptureKeysResult,
   ModelRecord,
   UsageLogPage,
   UsageLogQuery,
@@ -23,6 +24,7 @@ import type {
   RefreshResult,
   SiteMutationResult,
   SiteRecord,
+  SiteSummary,
   SiteSyncResult,
   ViewBounds,
   NetworkSettingsView,
@@ -75,6 +77,9 @@ const bridge: ApiNestBridge = {
       ipcRenderer.invoke(IPC_CHANNELS.sites.syncAccounts, { siteId }) as Promise<SiteSyncResult>,
     checkInAccounts: (siteId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.sites.checkInAccounts, { siteId }) as Promise<BatchCheckInResult>,
+    getSummaries: () => ipcRenderer.invoke(IPC_CHANNELS.sites.getSummaries, {}) as Promise<SiteSummary[]>,
+    openWebsite: (siteId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sites.openWebsite, { siteId }) as Promise<void>,
   },
   accounts: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.accounts.list) as Promise<AccountRecord[]>,
@@ -98,10 +103,18 @@ const bridge: ApiNestBridge = {
     unlock: (masterPassword: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.auth.unlock, { masterPassword }) as Promise<void>,
     lock: () => ipcRenderer.invoke(IPC_CHANNELS.auth.lock, {}) as Promise<void>,
-    openLogin: (accountId: string, mode: LoginMode) =>
-      ipcRenderer.invoke(IPC_CHANNELS.auth.openLogin, { accountId, mode }) as Promise<LoginResult>,
+    openLogin: (accountId: string, mode?: LoginMode) =>
+      ipcRenderer.invoke(IPC_CHANNELS.auth.openLogin, {
+        accountId,
+        mode: mode ?? 'auto',
+      }) as Promise<LoginResult>,
     clearSession: (accountId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.auth.clearSession, { accountId }) as Promise<void>,
+    importCookies: (accountId: string, cookieHeader: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.auth.importCookies, {
+        accountId,
+        cookieHeader,
+      }) as Promise<{ imported: number; authState: import('../shared/ipc/bridge').AuthState; message: string }>,
   },
   authIdentities: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.authIdentities.list, {}) as Promise<AuthIdentity[]>,
@@ -115,8 +128,8 @@ const bridge: ApiNestBridge = {
       ipcRenderer.invoke(IPC_CHANNELS.authIdentities.saveCredential, { authId: id, ...input }) as Promise<void>,
     hasCredential: (id: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.authIdentities.hasCredential, { authId: id }) as Promise<boolean>,
-    openLogin: (id: string) =>
-      ipcRenderer.invoke(IPC_CHANNELS.authIdentities.openLogin, { authId: id }) as Promise<LoginResult>,
+    openLogin: (id: string, target?: import('../shared/ipc/bridge').AuthLoginTarget) =>
+      ipcRenderer.invoke(IPC_CHANNELS.authIdentities.openLogin, { authId: id, target }) as Promise<LoginResult>,
   },
   checkIn: {
     runOne: (accountId: string) =>
@@ -126,8 +139,12 @@ const bridge: ApiNestBridge = {
   keys: {
     listByAccount: (accountId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.keys.listByAccount, { accountId }) as Promise<ApiKeyRecord[]>,
+    refresh: (accountId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.keys.refresh, { accountId }) as Promise<ApiKeyRecord[]>,
     reveal: (accountId: string, tokenId: number) =>
       ipcRenderer.invoke(IPC_CHANNELS.keys.reveal, { accountId, tokenId }) as Promise<string>,
+    captureAll: (accountId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.keys.captureAll, { accountId }) as Promise<CaptureKeysResult>,
   },
   models: {
     listByAccount: (accountId: string) =>

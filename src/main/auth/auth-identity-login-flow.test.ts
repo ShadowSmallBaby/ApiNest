@@ -54,14 +54,14 @@ describe('AuthIdentityLoginFlow', () => {
     expect(result.authState).toBe('unknown');
   });
 
-  it('linuxdo 身份打开 linux.do', () => {
+  it('linuxdo 身份打开 connect.linux.do，并放行论坛与 connect', async () => {
     const entity = makeEntity({ kind: 'linuxdo' });
     const { flow, openCalls } = makeFlow(entity);
 
-    flow.open(entity.id);
+    await flow.open(entity.id);
 
-    expect(openCalls[0].startUrl).toBe('https://linux.do/');
-    expect(openCalls[0].redirectDomains).toEqual(['linux.do']);
+    expect(openCalls[0].startUrl).toBe('https://connect.linux.do/');
+    expect(openCalls[0].redirectDomains).toEqual(['connect.linux.do', 'linux.do']);
   });
 
   it('auth 专属 partition 不与任何账户 partition 相同', () => {

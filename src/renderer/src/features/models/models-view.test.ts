@@ -66,8 +66,8 @@ describe('models view account filters', () => {
 describe('modelCapableSites', () => {
   it('keeps only newapi sites', () => {
     const sites: SiteRecord[] = [
-      { id: SITE_A, name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false },
-      { id: SITE_B, name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false },
+      { id: SITE_A, name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
+      { id: SITE_B, name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
     ];
     expect(modelCapableSites(sites).map(site => site.id)).toEqual([SITE_A]);
   });

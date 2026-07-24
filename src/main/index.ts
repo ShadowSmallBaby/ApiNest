@@ -38,6 +38,8 @@ import { SiteCredentialService } from './auth/site-credential-service';
 import { AuthIdentityRepository } from './storage/repositories/auth-identity-repository';
 import { SessionPartitionManager } from './auth/session-partition-manager';
 import { IdpCookieSyncService } from './auth/idp-cookie-sync';
+import { CookieImportService } from './auth/cookie-import-service';
+import { LinuxDoHeadlessLogin } from './adapters/newapi/linuxdo-headless-login';
 import { buildIpcHandlers } from './ipc/handlers';
 import { registerIpcHandlers } from './ipc/register';
 import { WindowControlService } from './window/window-control-service';
@@ -48,6 +50,7 @@ import { openDatabase } from './storage/database';
 import { AccountAuthStateRepository } from './storage/repositories/account-auth-state-repository';
 import { CheckInResultRepository } from './storage/repositories/checkin-result-repository';
 import { AccountRepository } from './storage/repositories/account-repository';
+import { AccountKeysRepository } from './storage/repositories/account-keys-repository';
 import { SiteRepository } from './storage/repositories/site-repository';
 import { SiteService } from './sites/site-service';
 import { runMigrations } from './storage/run-migrations';
@@ -88,21 +91,30 @@ function closeDatabase(): void {
 }
 
 /**
- * 启动阶段应用全局 Secure DNS（应用级、重启生效）。
- * secure 模式失败视为致命：抛出以阻止在无预期 DNS 保护下继续联网启动，绝不回退普通 DNS；
- * off / automatic 失败不阻断启动（本就允许普通 DNS），且不记录任何敏感信息。
+ * 应用全局 Secure DNS（app.configureHostResolver，运行时可热切换，无需重启）。
+ * secure 模式失败：启动阶段视为致命；热更新时返回错误文案，不静默回退。
+ * off / automatic 失败不阻断（本就允许普通 DNS）。
  */
-function applyHostResolver(settings: NetworkSettings): void {
+function applyHostResolver(
+  settings: NetworkSettings,
+  options: { fatalOnSecureFailure?: boolean } = {},
+): { ok: boolean; error?: string } {
   const { secureDns } = settings;
+  const fatalOnSecureFailure = options.fatalOnSecureFailure ?? false;
   try {
     app.configureHostResolver({
       secureDnsMode: secureDns.mode,
+      // 仅 secure 注入自定义 DoH；off/automatic 的 servers 仅作配置保留。
       ...(secureDns.mode === 'secure' ? { secureDnsServers: secureDns.servers } : {}),
     });
+    return { ok: true };
   } catch (error) {
-    if (secureDns.mode === 'secure') {
+    if (secureDns.mode === 'secure' && fatalOnSecureFailure) {
       throw error;
     }
+    const message =
+      error instanceof Error ? error.message : 'Failed to apply Secure DNS settings.';
+    return { ok: false, error: message };
   }
 }
 
@@ -139,16 +151,17 @@ app.whenReady().then(async () => {
   const siteRepository = new SiteRepository(database);
   const authIdentityRepository = new AuthIdentityRepository(database);
   const authStateRepository = new AccountAuthStateRepository(database);
+  const accountKeysRepository = new AccountKeysRepository(database);
 
   // 网络设置（阶段 6）：在任何 Session 创建或联网前，先读取全局 Secure DNS / Proxy 模板，
-  // 应用应用级 Host Resolver（Secure DNS 重启生效），再装配 partition 级 Proxy 屏障组件。
+  // 应用应用级 Host Resolver（可热切换），再装配 partition 级 Proxy 屏障组件。
   const networkSettingsRepository = new NetworkSettingsRepository(database);
   const networkSettingsService = new NetworkSettingsService({
     get: () => networkSettingsRepository.get(),
     update: raw =>
       networkSettingsRepository.update({ ...raw, updatedAt: new Date().toISOString() }),
   });
-  applyHostResolver(networkSettingsService.getSettings());
+  applyHostResolver(networkSettingsService.getSettings(), { fatalOnSecureFailure: true });
 
   const networkConfigurator = new SessionNetworkConfigurator();
   const networkPolicyResolver = new NetworkPolicyResolver({
@@ -200,6 +213,10 @@ app.whenReady().then(async () => {
     authStateRepository,
     authIdentityRepository,
   });
+  // 站点广场聚合所需的两个 repository 提前定义（供 SiteService.getSummaries 注入）；
+  // 下方刷新/签到编排复用同一实例。
+  const snapshotRepository = new SnapshotRepository(database);
+  const checkInResultRepository = new CheckInResultRepository(database);
   const siteService = new SiteService({
     siteRepository,
     accountRepository,
@@ -207,6 +224,8 @@ app.whenReady().then(async () => {
     platformDetector: newApiAdapter,
     sessionCleaner: sessionPartitionManager,
     networkInvalidator: sessionPartitionManager,
+    snapshotRepository,
+    checkInResultRepository,
   });
 
   // 应用内嵌页面视图（R11）：基于 WebContentsView 挂载到主窗口内容区。
@@ -275,6 +294,13 @@ app.whenReady().then(async () => {
     partitionManager: sessionPartitionManager,
   });
 
+  // LinuxDo 无头自动登录（2026-07-22 主人授权：可代点同意；code 瞬态不落库）。
+  const linuxDoHeadlessLogin = new LinuxDoHeadlessLogin({
+    sessionClient,
+    siteIdentityStore: authStateRepository,
+    refreshAuthState: accountId => authSessionService.refreshAuthState(accountId),
+  });
+
   const loginFlowService = new LoginFlowService({
     accountRepository,
     adapterRegistry,
@@ -284,6 +310,14 @@ app.whenReady().then(async () => {
     idpCookieSync,
     // NewAPI manual 登录时受控捕获站内数字用户 ID（写入 account_auth_state，非凭据）。
     siteIdentityStore: authStateRepository,
+    linuxDoHeadlessLogin,
+  });
+
+  // 手动导入站点 Cookie 到账户 partition（2026-07-22 主人授权）。
+  const cookieImportService = new CookieImportService({
+    accountRepository,
+    partitionManager: sessionPartitionManager,
+    authSessionService,
   });
 
   // 站点账号密码加密凭据引用（R13）：复用 Vault 信封加密，只做存/删/存在性/主进程内揭示。
@@ -301,9 +335,7 @@ app.whenReady().then(async () => {
 
   // 用户侧刷新编排（5.4）。成功写最新快照、失败记 error 且不覆盖旧快照、
   // 单项解析 null 保留旧值不填 0。
-  const snapshotRepository = new SnapshotRepository(database);
   const operationRepository = new OperationRepository(database);
-  const checkInResultRepository = new CheckInResultRepository(database);
   const checkInService = new CheckInService({
     accountRepository,
     authStateRepository,
@@ -329,7 +361,13 @@ app.whenReady().then(async () => {
   // 密钥管理（阶段 1）：在账户专属 partition 内拉取/揭示 NewAPI token。
   // listByAccount 返回脱敏视图；reveal 明文仅当次返回，绝不写日志/快照/缓存。
   const keysClient = new NewApiKeysClient({ sessionClient });
-  const keysService = new KeysService({ accountRepository, authStateRepository, keysClient });
+  const keysService = new KeysService({
+    accountRepository,
+    authStateRepository,
+    keysClient,
+    keysRepository: accountKeysRepository,
+    vault: vaultService,
+  });
 
   // 模型管理（阶段 2）：拉取 /api/pricing + /api/user/models，标注账户可用模型。
   // 解析失败返回 null（保守置不可用）；仅 newapi 平台支持。
@@ -370,7 +408,9 @@ app.whenReady().then(async () => {
       // 绝不写日志/快照/缓存；仅 newapi 平台支持，其余在服务层报 NOT_IMPLEMENTED。
       keys: {
         listByAccount: accountId => keysService.listByAccount(accountId),
+        refresh: accountId => keysService.refresh(accountId),
         reveal: (accountId, tokenId) => keysService.reveal(accountId, tokenId),
+        captureAll: accountId => keysService.captureAll(accountId),
       },
       // 模型管理（阶段 2）。listByAccount 返回账户可用模型标注视图；
       // 仅 newapi 平台支持，其余在服务层报 NOT_IMPLEMENTED。
@@ -394,8 +434,18 @@ app.whenReady().then(async () => {
           if (result.proxyChanged) {
             networkConfigurator.invalidateAll();
           }
-          return toNetworkSettingsView(result.settings);
+          let dnsApplied: boolean | undefined;
+          let dnsApplyError: string | undefined;
+          if (result.dnsChanged) {
+            const applied = applyHostResolver(result.settings);
+            dnsApplied = applied.ok;
+            dnsApplyError = applied.error;
+          }
+          return toNetworkSettingsView(result.settings, { dnsApplied, dnsApplyError });
         },
+      },
+      cookieImport: {
+        import: (accountId, cookieHeader) => cookieImportService.import(accountId, cookieHeader),
       },
       // 应用内打开：挂载内嵌视图到内容区（R11）。bounds 缺省时由管理器沿用最近上报值。
       inAppPageOpener: async request => {
@@ -416,7 +466,7 @@ app.whenReady().then(async () => {
         remove: authId => authIdentityService.remove(authId),
         saveCredential: (authId, input) => authIdentityService.saveCredential(authId, input),
         hasCredential: authId => authIdentityService.hasCredential(authId),
-        openLogin: authId => authIdentityLoginFlow.open(authId),
+        openLogin: (authId, target) => authIdentityLoginFlow.open(authId, target),
       },
       embeddedPage: {
         close: () => embeddedPageViewManager.unmount(),

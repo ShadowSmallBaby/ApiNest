@@ -16,6 +16,7 @@ type FixedProxyScheme = 'http' | 'https' | 'socks5';
 /** 网络设置的扁平表单态（贴合输入控件）；提交/回填时与嵌套 View 双向转换。 */
 interface NetworkFormState {
   secureDnsEnabled: boolean;
+  /** 始终保留用户填写的 DoH 文本，开关关闭也不清空。 */
   secureDnsServers: string;
   proxyMode: ProxyMode;
   fixedProxyScheme: FixedProxyScheme;
@@ -35,7 +36,8 @@ const EMPTY_NETWORK_FORM: NetworkFormState = {
 function viewToForm(view: NetworkSettingsView): NetworkFormState {
   return {
     secureDnsEnabled: view.secureDns.mode !== 'off',
-    secureDnsServers: view.secureDns.mode === 'secure' ? view.secureDns.servers.join('\n') : '',
+    // 始终回填 servers（关闭时也保留）。
+    secureDnsServers: (view.secureDns.servers ?? []).join('\n'),
     proxyMode: view.proxy.mode,
     fixedProxyScheme: view.proxy.mode === 'fixed' ? view.proxy.scheme : 'http',
     fixedProxyHost: view.proxy.mode === 'fixed' ? view.proxy.host : '',
@@ -44,27 +46,25 @@ function viewToForm(view: NetworkSettingsView): NetworkFormState {
 }
 
 /**
- * 安全 DNS 表单态 → 严格更新输入（填即开语义）：
- * 总开关关闭 → off；开启且填了 DoH → secure（强制加密）；开启但留空 → automatic（跟随系统）。
- * 空白 DoH 行剔除；https 合法性由主进程 strict schema 与领域校验兜底。
+ * 安全 DNS 表单态 → 更新输入。
+ * - 开关关：mode=off，但 servers 仍提交（持久化保留）
+ * - 开关开 + 有 DoH：mode=secure
+ * - 开关开 + 空 DoH：mode=automatic
  */
 function toSecureDnsInput(form: NetworkFormState): UpdateNetworkSettingsInput['secureDns'] {
-  if (!form.secureDnsEnabled) {
-    return { mode: 'off' as const };
-  }
   const servers = form.secureDnsServers
     .split('\n')
     .map(line => line.trim())
     .filter(line => line.length > 0);
+
+  if (!form.secureDnsEnabled) {
+    return { mode: 'off' as const, servers };
+  }
   return servers.length > 0
     ? { mode: 'secure' as const, servers }
-    : { mode: 'automatic' as const };
+    : { mode: 'automatic' as const, servers: [] };
 }
 
-/**
- * 扁平表单态 → 严格更新输入。端口转数字；
- * 具体的 host/port 合法性由主进程 strict schema 与领域校验兜底，失败以错误提示呈现。
- */
 function formToInput(form: NetworkFormState): UpdateNetworkSettingsInput {
   const secureDns = toSecureDnsInput(form);
   const proxy =
@@ -81,11 +81,8 @@ function formToInput(form: NetworkFormState): UpdateNetworkSettingsInput {
 
 /**
  * 系统设置页。提供：桥接版本展示、手动锁定、按账户会话清理，
- * 以及全局 Secure DNS 与 Proxy 网络设置（阶段 6）。
- *
- * Secure DNS 为应用级、重启生效；Proxy 仅作用于显式 opt-in 的站点与 OAuth 身份，
- * 外部浏览器不受控。清理严格按 accountId 执行，不提供"清空全部"；
- * 清理确认在右侧 slide-over 内完成，不使用原生 window.confirm。
+ * 以及全局 Secure DNS 与 Proxy 网络设置。
+ * Secure DNS 保存后热应用（configureHostResolver）；关闭开关不清除已填 DoH。
  */
 export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
@@ -148,7 +145,14 @@ export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): Re
     try {
       const updated = await window.apinest.network.updateSettings(formToInput(networkForm));
       setNetworkForm(viewToForm(updated));
-      setNetworkMessage('网络设置已保存。Secure DNS 变更将在重启应用后生效。');
+      if (updated.dnsApplyError) {
+        setNetworkError(`Secure DNS 应用失败：${updated.dnsApplyError}`);
+        setNetworkMessage('网络设置已保存，但 Secure DNS 热应用未成功。');
+      } else if (updated.dnsApplied === true) {
+        setNetworkMessage('网络设置已保存；Secure DNS 已热应用（无需重启）。');
+      } else {
+        setNetworkMessage('网络设置已保存。');
+      }
     } catch (error) {
       setNetworkError(getSafeErrorMessage(error));
     } finally {
@@ -184,7 +188,8 @@ export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): Re
         <section className="settings-section">
           <h3>安全 DNS（Secure DNS）</h3>
           <p className="hint">
-            应用级全局设置，保存后需<strong>重启应用</strong>才生效；仅影响应用内联网，不改变系统 DNS。
+            应用级全局设置，保存后<strong>即时热应用</strong>（无需重启）；仅影响应用内联网，不改变系统 DNS。
+            关闭开关会隐藏 DoH 输入框，但不会清除已填写的地址，再次开启仍可回显。
           </p>
           <p className="hint">
             若系统开启 Clash 等 <strong>TUN 模式</strong>（尤其 fake-ip），建议关闭安全 DNS 或改用固定代理指向
@@ -197,14 +202,17 @@ export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): Re
               checked={networkForm.secureDnsEnabled}
               disabled={networkBusy}
               onChange={event =>
+                // 关闭仅隐藏输入框，不清理 secureDnsServers（再开启仍回显）。
                 setNetworkForm(form => ({ ...form, secureDnsEnabled: event.target.checked }))
               }
             />
-            启用安全 DNS（关闭则仅使用普通 DNS）
+            启用安全 DNS（关闭则仅使用普通 DNS；已填地址会保留）
           </label>
           {networkForm.secureDnsEnabled ? (
             <div className="settings-field">
-              <label htmlFor="secure-dns-servers">DoH 服务器（每行一个 https 地址；留空则自动跟随系统）</label>
+              <label htmlFor="secure-dns-servers">
+                DoH 服务器（每行一个 https 地址；留空则自动跟随系统）
+              </label>
               <textarea
                 id="secure-dns-servers"
                 rows={3}
@@ -216,7 +224,7 @@ export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): Re
                 }
               />
               <p className="hint">
-                填写则强制走这些加密 DoH；留空则自动（系统已配置 DoH 时自动启用）。不接受含账号密码或非 HTTPS 的地址。
+                填写则强制走这些加密 DoH；留空则自动（系统已配置 DoH 时自动启用）。关闭开关会隐藏本输入框，但不会清除已填地址。不接受含账号密码或非 HTTPS 的地址。
               </p>
             </div>
           ) : null}
@@ -311,32 +319,31 @@ export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): Re
 
         <section className="settings-section">
           <h3>会话清理</h3>
-          <p className="hint">清理仅影响所选账户的本地网页会话与缓存，需重新登录；不影响其他账户。</p>
-          {accounts.length === 0 ? (
-            <p className="empty-state">暂无账户，请先在「站点」中创建。</p>
-          ) : (
-            <div className="detail-actions">
-              <select
-                value={selectedId}
-                disabled={isBusy || pending}
-                onChange={event => setSelectedId(event.target.value)}
-              >
-                {accounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {account.siteName} · {account.displayName}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="danger-button"
-                onClick={handleClearSession}
-                disabled={isBusy || pending || !selectedAccount}
-              >
-                {pending ? '清理中…' : '清理该账户会话'}
-              </button>
-            </div>
-          )}
+          <p className="hint">按账户清理应用内会话（Cookie / 缓存）；不会影响其他账户。</p>
+          <div className="settings-field">
+            <label htmlFor="clear-session-account">账户</label>
+            <select
+              id="clear-session-account"
+              value={selectedId}
+              disabled={isBusy || pending || accounts.length === 0}
+              onChange={event => setSelectedId(event.target.value)}
+            >
+              {accounts.length === 0 ? <option value="">暂无账户</option> : null}
+              {accounts.map(account => (
+                <option key={account.id} value={account.id}>
+                  {account.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={handleClearSession}
+            disabled={isBusy || pending || !selectedAccount}
+          >
+            清理所选账户会话
+          </button>
           {message ? <p className="hint">{message}</p> : null}
           {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
         </section>
@@ -346,12 +353,15 @@ export function SettingsPage({ version, isBusy, onLock }: SettingsPageProps): Re
         open={confirmClear}
         onClose={() => setConfirmClear(false)}
         onConfirm={() => void performClearSession()}
-        title="清理账户会话"
-        message={<>确认清理账户「<strong>{selectedAccount?.displayName}</strong>」的本地网页会话？</>}
-        detail="该账户下次需要重新登录；同一 URL 的其他账户不受影响。"
+        title="清理会话"
+        message={
+          selectedAccount
+            ? `确定清理账户「${selectedAccount.displayName}」的应用内会话吗？`
+            : '确定清理会话吗？'
+        }
         danger
-        confirmLabel="清理会话"
-        busy={isBusy || pending}
+        confirmLabel="清理"
+        busy={pending}
       />
     </>
   );

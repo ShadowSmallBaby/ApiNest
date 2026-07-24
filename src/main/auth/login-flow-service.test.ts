@@ -95,6 +95,7 @@ describe('LoginFlowService', () => {
   it('opens only the target site LinuxDo entry with explicit trusted hosts', async () => {
     const test = createService();
 
+    // 无 headless 服务时 auto/linuxdo 降级为打开站点登录页（LinuxDo 白名单域）。
     await test.service.open(account.id, 'linuxdo');
 
     expect(test.requests[0]).toMatchObject({
@@ -102,6 +103,115 @@ describe('LoginFlowService', () => {
       oauthDomains: ['connect.linux.do'],
       redirectDomains: ['newapi.example.com'],
     });
+  });
+
+  it('auto mode without LinuxDo client id falls back to manual browser domains', async () => {
+    const test = createService({ account: { ...account, linuxDoClientId: undefined } });
+
+    await test.service.open(account.id, 'auto');
+
+    expect(test.requests[0]).toMatchObject({
+      startUrl: 'https://newapi.example.com/login',
+      oauthDomains: ['github.com', 'connect.linux.do'],
+    });
+  });
+
+  it('returns early when LinuxDo headless login succeeds without opening a window', async () => {
+    const requests: OpenContainerRequest[] = [];
+    const service = new LoginFlowService({
+      accountRepository: { get: () => account },
+      adapterRegistry: {
+        get: () => ({ getPageUrl: () => new URL('https://newapi.example.com/login') }),
+      } as never,
+      browserContainer: {
+        open: request => {
+          requests.push(request);
+          return {} as never;
+        },
+      },
+      authSessionService: { refreshAuthState: async () => 'active' },
+      linuxDoHeadlessLogin: {
+        run: async () => ({
+          ok: true as const,
+          authState: 'active' as const,
+          hasSiteUserId: true,
+          message: 'LinuxDo 自动登录已完成。',
+        }),
+      },
+    });
+
+    await expect(service.open(account.id, 'auto')).resolves.toMatchObject({
+      accountId: account.id,
+      mode: 'auto',
+      authState: 'active',
+      message: 'LinuxDo 自动登录已完成。',
+    });
+    expect(requests).toHaveLength(0);
+  });
+
+  it('falls back to the browser window when headless needs interactive login', async () => {
+    const requests: OpenContainerRequest[] = [];
+    const service = new LoginFlowService({
+      accountRepository: { get: () => account },
+      adapterRegistry: {
+        get: () => ({ getPageUrl: () => new URL('https://newapi.example.com/login') }),
+      } as never,
+      browserContainer: {
+        open: request => {
+          requests.push(request);
+          return {} as never;
+        },
+      },
+      authSessionService: { refreshAuthState: async () => 'unknown' },
+      linuxDoHeadlessLogin: {
+        run: async () => ({
+          ok: false as const,
+          reason: 'NEEDS_INTERACTIVE' as const,
+          fallbackToBrowser: true,
+          message: '需要在 LinuxDo 完成登录或确认，将打开手动窗口。',
+        }),
+      },
+    });
+
+    const result = await service.open(account.id, 'auto');
+    expect(result).toMatchObject({
+      mode: 'auto',
+      authState: 'unknown',
+    });
+    expect(result.message).toContain('需要在 LinuxDo 完成登录或确认');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.startUrl).toBe('https://newapi.example.com/sign-in');
+  });
+
+  it('does not open a window when headless rejects an untrusted callback', async () => {
+    const requests: OpenContainerRequest[] = [];
+    const service = new LoginFlowService({
+      accountRepository: { get: () => account },
+      adapterRegistry: {
+        get: () => ({ getPageUrl: () => new URL('https://newapi.example.com/login') }),
+      } as never,
+      browserContainer: {
+        open: request => {
+          requests.push(request);
+          return {} as never;
+        },
+      },
+      authSessionService: { refreshAuthState: async () => 'unknown' },
+      linuxDoHeadlessLogin: {
+        run: async () => ({
+          ok: false as const,
+          reason: 'CALLBACK_REJECTED' as const,
+          fallbackToBrowser: false,
+          message: '回调地址不受信，已中止自动登录。',
+        }),
+      },
+    });
+
+    await expect(service.open(account.id, 'auto')).resolves.toMatchObject({
+      authState: 'error',
+      message: '回调地址不受信，已中止自动登录。',
+    });
+    expect(requests).toHaveLength(0);
   });
 
   it('refreshes only the target account session after its login window closes', async () => {
@@ -149,16 +259,18 @@ describe('LoginFlowService', () => {
     expect(test.requests).toHaveLength(1);
   });
 
-  it('rejects unknown accounts and falls back safely when LinuxDo prerequisites are absent', async () => {
+  it('rejects unknown accounts; auto without LinuxDo still opens a browser window', async () => {
     const unknown = createService({ account: null });
     await expect(unknown.service.open(account.id, 'manual')).rejects.toThrow(
       new AppError('ACCOUNT_NOT_FOUND', 'Account was not found.'),
     );
 
     const missingClientId = createService({ account: { ...account, linuxDoClientId: undefined } });
-    await expect(missingClientId.service.open(account.id, 'linuxdo')).rejects.toThrow(
-      new AppError('NOT_IMPLEMENTED', 'LinuxDo login is unavailable. Use manual in-app login instead.'),
-    );
+    await expect(missingClientId.service.open(account.id, 'auto')).resolves.toMatchObject({
+      accountId: account.id,
+      authState: 'unknown',
+    });
+    expect(missingClientId.requests).toHaveLength(1);
   });
 
   it('starts site identity capture for NewAPI manual login and stops it on close', async () => {
@@ -198,7 +310,7 @@ describe('LoginFlowService', () => {
     expect(events).toContain('stop');
   });
 
-  it('does not start identity capture for linuxdo login', async () => {
+  it('does not start identity capture for pure headless success path', async () => {
     let started = false;
     const service = new LoginFlowService({
       accountRepository: { get: () => account },
@@ -206,14 +318,9 @@ describe('LoginFlowService', () => {
         get: () => ({ getPageUrl: () => new URL('https://newapi.example.com/login') }),
       } as never,
       browserContainer: {
-        open: (async (request: OpenContainerRequest) => {
-          request.onWebContentsReady?.({
-            getURL: () => 'https://newapi.example.com/',
-            executeJavaScript: async () => ({}),
-            isDestroyed: () => false,
-          } as never);
-          return {} as never;
-        }) as never,
+        open: async () => {
+          throw new Error('should not open');
+        },
       },
       authSessionService: { refreshAuthState: async () => 'active' },
       siteIdentityStore: { getSiteUserId: () => null, upsertSiteIdentity: () => {} },
@@ -221,9 +328,17 @@ describe('LoginFlowService', () => {
         started = true;
         return { start: () => {}, stop: () => {} };
       }) as never,
+      linuxDoHeadlessLogin: {
+        run: async () => ({
+          ok: true as const,
+          authState: 'active' as const,
+          hasSiteUserId: true,
+          message: 'ok',
+        }),
+      },
     });
 
-    await service.open(account.id, 'linuxdo');
+    await service.open(account.id, 'auto');
     expect(started).toBe(false);
   });
 });

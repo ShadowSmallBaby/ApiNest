@@ -78,6 +78,18 @@ describe('parseNetworkSettings', () => {
     ).toThrow();
   });
 
+  it('preserves DoH servers when DNS is off (config retention)', () => {
+    const result = parseNetworkSettings({
+      ...base,
+      secureDnsMode: 'off',
+      secureDnsServers: ['https://cloudflare-dns.com/dns-query'],
+    });
+    expect(result.secureDns).toEqual({
+      mode: 'off',
+      servers: ['https://cloudflare-dns.com/dns-query'],
+    });
+  });
+
   it('parses secure DNS and de-duplicates servers preserving order', () => {
     const result = parseNetworkSettings({
       ...base,
@@ -131,12 +143,12 @@ describe('toRawNetworkSettings', () => {
     });
   });
 
-  it('clears servers and fixed fields for off DNS and direct proxy', () => {
+  it('keeps servers when flattening off DNS (does not wipe saved DoH)', () => {
     const raw = toRawNetworkSettings({
-      secureDns: { mode: 'off', servers: [] },
+      secureDns: { mode: 'off', servers: ['https://a/q'] },
       proxy: { mode: 'direct' },
     });
-    expect(raw.secureDnsServers).toEqual([]);
+    expect(raw.secureDnsServers).toEqual(['https://a/q']);
     expect(raw.fixedProxyScheme).toBeNull();
     expect(raw.fixedProxyHost).toBeNull();
     expect(raw.fixedProxyPort).toBeNull();

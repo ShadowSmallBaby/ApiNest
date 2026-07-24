@@ -14,10 +14,10 @@ export interface NetworkSettingsStore {
   update(raw: RawNetworkSettings): void;
 }
 
-/** 更新结果：新配置 + 相对旧配置的变化标记，供调用方决定重启提示 / Proxy 热应用。 */
+/** 更新结果：新配置 + 相对旧配置的变化标记，供调用方热应用 DNS / Proxy。 */
 export interface NetworkSettingsUpdate {
   settings: NetworkSettings;
-  /** Secure DNS 发生变化（应用级、重启生效，本服务不热切换 Host Resolver）。 */
+  /** Secure DNS 发生变化（应用级；组合根调用 app.configureHostResolver 热应用）。 */
   dnsChanged: boolean;
   /** Proxy 模板发生变化（partition 级，调用方据此对已知 Session 热应用）。 */
   proxyChanged: boolean;
@@ -44,9 +44,8 @@ function proxyEquals(a: ProxyTemplate, b: ProxyTemplate): boolean {
 /**
  * 网络设置领域服务：只负责读取、严格校验与保存全局 Secure DNS / Proxy 模板。
  *
- * 刻意不直接触碰 Session / Host Resolver：DNS 变化仅标记（重启生效），
- * Proxy 变化仅上报 proxyChanged，热应用编排交由更上层（组合根 / IPC 服务）完成，
- * 从而保持本服务纯净、可单测，且不越权改变运行时网络出口。
+ * 刻意不直接触碰 Session / Host Resolver：DNS/Proxy 变化仅标记，
+ * 热应用（configureHostResolver / setProxy）由组合根完成，本服务保持可单测。
  */
 export class NetworkSettingsService {
   constructor(private readonly store: NetworkSettingsStore) {}

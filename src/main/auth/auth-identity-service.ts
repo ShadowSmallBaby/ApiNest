@@ -44,6 +44,7 @@ function toView(entity: AuthIdentityEntity, hasCredential: boolean): AuthIdentit
     note: entity.note,
     hasCredential,
     useProxy: entity.useProxy,
+    createdAt: entity.createdAt,
   };
 }
 

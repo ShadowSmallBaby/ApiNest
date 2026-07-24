@@ -9,11 +9,16 @@ import type { AuthSessionService } from './auth-session-service';
 import type { IdpCookieSyncService } from './idp-cookie-sync';
 import { resolveLinuxDoOAuthPlan } from '../adapters/newapi/linuxdo-oauth';
 import {
+  LinuxDoHeadlessLogin,
+  type LinuxDoHeadlessOutcome,
+} from '../adapters/newapi/linuxdo-headless-login';
+import {
   createSiteIdentityCapture,
   type SiteIdentityCaptureHandle,
   type SiteIdentityStore,
 } from '../adapters/newapi/newapi-browser-identity-capture';
 import { DEFAULT_MANUAL_OAUTH_DOMAINS, type IdpAuthKind } from './idp-hosts';
+import { appLogger } from '../logging/logger';
 
 type AccountRepositoryPort = Pick<AccountRepository, 'get'>;
 type AdapterRegistryPort = Pick<AdapterRegistry, 'get'>;
@@ -21,20 +26,22 @@ type BrowserContainerPort = Pick<ControlledBrowserContainer, 'open'>;
 type AuthSessionServicePort = Pick<AuthSessionService, 'refreshAuthState'>;
 type AuthIdentityRepositoryPort = Pick<AuthIdentityRepository, 'get'>;
 type IdpCookieSyncPort = Pick<IdpCookieSyncService, 'syncLinkedIdpCookies'>;
+type HeadlessLoginPort = Pick<LinuxDoHeadlessLogin, 'run'>;
 
 export interface LoginFlowServiceDependencies {
   accountRepository: AccountRepositoryPort;
   adapterRegistry: AdapterRegistryPort;
   browserContainer: BrowserContainerPort;
   authSessionService: AuthSessionServicePort;
-  /** auth 身份仓储：读取账户绑定 auth 的类型，决定是否同步 IdP Cookie。 */
   authIdentityRepository?: AuthIdentityRepositoryPort;
-  /** IdP Cookie 同步服务：打开登录窗前把绑定 auth 的 IdP Cookie 注入账户 partition。 */
   idpCookieSync?: IdpCookieSyncPort;
-  /** 站内用户 ID 持久化：NewAPI manual 登录时受控捕获后写入（缺省则不捕获）。 */
   siteIdentityStore?: SiteIdentityStore;
-  /** 捕获器工厂（默认 createSiteIdentityCapture，便于测试注入）。 */
   createIdentityCapture?: typeof createSiteIdentityCapture;
+  /**
+   * LinuxDo 无头自动登录（session.fetch）。
+   * 2026-07-22 主人授权：可代点同意；失败且可降级时再打开受控窗口。
+   */
+  linuxDoHeadlessLogin?: HeadlessLoginPort;
 }
 
 function isIdpAuthKind(kind: string): kind is IdpAuthKind {
@@ -60,14 +67,15 @@ function toAdapterAccount(account: {
 }
 
 /**
- * 打开账户专属的手动或 LinuxDo 官方认证页面。
- * 应用只导航到适配器确认的目标页，不读取表单、不收集密码、不交换 OAuth code；
- * 容器关闭后仅重新校验目标站点会话，active 才代表登录成功。
+ * 账户登录编排。
+ *
+ * - auto / linuxdo：有 LinuxDo 前置条件时先无头自动，失败可降级受控窗口；无前置则直接窗口。
+ * - manual：强制受控窗口 + 可选 siteUserId 捕获。
  */
 export class LoginFlowService {
   constructor(private readonly deps: LoginFlowServiceDependencies) {}
 
-  async open(accountId: string, mode: LoginMode): Promise<LoginResult> {
+  async open(accountId: string, mode: LoginMode = 'auto'): Promise<LoginResult> {
     const account = this.deps.accountRepository.get(accountId);
     if (!account) {
       throw new AppError('ACCOUNT_NOT_FOUND', 'Account was not found.');
@@ -75,19 +83,50 @@ export class LoginFlowService {
 
     const adapterAccount = toAdapterAccount(account);
     const adapter = this.deps.adapterRegistry.get(adapterAccount.platform);
-    const request = mode === 'linuxdo'
-      ? this.getLinuxDoRequest(adapterAccount)
-      : this.getManualRequest(adapterAccount, adapter);
+    const preferAuto = mode === 'auto' || mode === 'linuxdo';
 
-    // 打开站点登录窗前，先把绑定 auth 身份的 IdP Cookie 注入账户 partition，
-    // 让站点 OAuth 复用已登录会话（失败不阻断，降级为用户手动完成）。
+    appLogger.info(`[登录] 开始 account=${accountId} mode=${mode} preferAuto=${preferAuto}`);
+
     await this.maybeSyncIdpCookies(accountId, account.authRefId ?? null);
 
-    // 仅 NewAPI manual 登录时启用站内用户 ID 受控提取（linuxdo OAuth 窗口不启用）。
+    /** 无头失败时的中文原因，拼进最终 UI 提示。 */
+    let headlessFallbackDetail: string | null = null;
+
+    if (preferAuto) {
+      const headlessAttempt = await this.tryLinuxDoHeadless(adapterAccount);
+      if (headlessAttempt.kind === 'done') {
+        const fullyOk =
+          headlessAttempt.result.authState === 'active';
+        appLogger.info(
+          `[登录] 自动登录${fullyOk ? '成功' : '结束'} account=${accountId} authState=${headlessAttempt.result.authState}`,
+        );
+        return headlessAttempt.result;
+      }
+      if (headlessAttempt.kind === 'fallback') {
+        headlessFallbackDetail = headlessAttempt.detail;
+        appLogger.warn(
+          `[登录] 自动登录失败，回退手动窗口 account=${accountId} reason=${headlessAttempt.reason} detail=${headlessAttempt.detail}`,
+        );
+      } else {
+        appLogger.info(`[登录] 跳过自动登录（无 LinuxDo 前置或未注入服务） account=${accountId}`);
+      }
+    }
+
+    // 自动失败或 manual：打开站点登录页（manual 域白名单更宽）。
+    const useManualBrowser = mode === 'manual' || !resolveLinuxDoOAuthPlan(adapterAccount);
+    const request = useManualBrowser
+      ? this.getManualRequest(adapterAccount, adapter)
+      : this.getLinuxDoRequest(adapterAccount);
+
+    appLogger.info(
+      `[登录] 打开受控窗口 account=${accountId} startUrl=${request.startUrl} path=${useManualBrowser ? 'manual-domains' : 'linuxdo-domains'}`,
+    );
+
+    // 仅强制 manual 或 auto 降级到站点页时启用站内用户 ID 捕获（窗口路径）。
     const identityCapture = this.prepareIdentityCapture(
       accountId,
       account.baseUrl,
-      mode,
+      'manual',
       adapterAccount.platform,
     );
 
@@ -97,26 +136,104 @@ export class LoginFlowService {
       baseUrl: account.baseUrl,
       onWebContentsReady: identityCapture?.onWebContentsReady,
       onClosed: () => {
-        // 关窗即停止提取，随后重新校验会话（此时站内用户 ID 通常已捕获持久化）。
         identityCapture?.stop();
         void this.deps.authSessionService.refreshAuthState(accountId);
       },
     });
 
+    const message = preferAuto
+      ? headlessFallbackDetail
+        ? `自动登录未完成（${headlessFallbackDetail}）。已打开登录窗口，请在官方页面完成认证。`
+        : '自动登录未完成，已打开登录窗口，请在官方页面完成认证。'
+      : '已打开登录窗口，请在官方页面完成认证。';
+
+    appLogger.info(`[登录] 已打开手动窗口 account=${accountId} message=${message}`);
+
     return {
       accountId,
-      mode,
+      mode: preferAuto ? 'auto' : mode,
       authState: 'unknown',
-      message: 'Login window opened. Complete authentication on the official site.',
+      message,
     };
   }
 
   /**
-   * 为 NewAPI manual 登录准备站内用户 ID 受控提取。
-   *
-   * 仅当 mode=manual、平台为 newapi、已注入持久化存储且 baseUrl 可解析出 origin 时启用；
-   * 返回窗口就绪回调与停止函数，其余情形返回 null（不提取）。
+   * 尝试 LinuxDo 无头登录。
+   * - skip：无 plan / 未注入服务
+   * - done：成功或不可降级错误（直接返回 LoginResult）
+   * - fallback：可降级失败，调用方开窗
    */
+  private async tryLinuxDoHeadless(
+    account: AdapterAccount,
+  ): Promise<
+    | { kind: 'skip' }
+    | { kind: 'done'; result: LoginResult }
+    | { kind: 'fallback'; reason: string; detail: string }
+  > {
+    const headless = this.deps.linuxDoHeadlessLogin;
+    if (!headless) {
+      appLogger.info('[登录] 无头服务未注入，跳过自动登录');
+      return { kind: 'skip' };
+    }
+
+    if (!resolveLinuxDoOAuthPlan(account)) {
+      appLogger.info(`[登录] 账户无 LinuxDo Client ID / plan，跳过自动登录 account=${account.id}`);
+      return { kind: 'skip' };
+    }
+
+    let outcome: LinuxDoHeadlessOutcome;
+    try {
+      appLogger.info(`[登录] 开始无头协议 account=${account.id}`);
+      outcome = await headless.run(account);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知异常';
+      appLogger.warn(`[登录] 无头流程抛错 account=${account.id} error=${detail}`);
+      return { kind: 'fallback', reason: 'THROWN', detail: '无头流程异常' };
+    }
+
+    if (outcome.ok) {
+      const label =
+        outcome.authState === 'active' && outcome.hasSiteUserId ? '无头成功' : '无头完成（会话未完全就绪）';
+      appLogger.info(
+        `[登录] ${label} account=${account.id} authState=${outcome.authState} hasSiteUserId=${outcome.hasSiteUserId}`,
+      );
+      return {
+        kind: 'done',
+        result: {
+          accountId: account.id,
+          mode: 'auto',
+          authState: outcome.authState,
+          message: outcome.message,
+        },
+      };
+    }
+
+    appLogger.warn(
+      `[登录] 无头失败 account=${account.id} reason=${outcome.reason} fallback=${outcome.fallbackToBrowser} msg=${outcome.message}`,
+    );
+
+    if (outcome.fallbackToBrowser) {
+      return {
+        kind: 'fallback',
+        reason: outcome.reason,
+        detail: outcome.message,
+      };
+    }
+
+    appLogger.warn(
+      `[登录] 无头硬失败（不开窗）account=${account.id} reason=${outcome.reason}`,
+    );
+    return {
+      kind: 'done',
+      result: {
+        accountId: account.id,
+        mode: 'auto',
+        authState: 'error',
+        message: outcome.message,
+      },
+    };
+  }
+
   private prepareIdentityCapture(
     accountId: string,
     baseUrl: string,
@@ -146,10 +263,6 @@ export class LoginFlowService {
     };
   }
 
-  /**
-   * 若账户绑定了 github/linuxdo 类型 auth 身份，则在打开登录窗前同步其 IdP Cookie。
-   * password 类型与未绑定跳过；同步失败仅记日志、不抛出，保证登录窗仍可打开。
-   */
   private async maybeSyncIdpCookies(accountId: string, authRefId: string | null): Promise<void> {
     if (!authRefId || !this.deps.idpCookieSync || !this.deps.authIdentityRepository) {
       return;
@@ -161,13 +274,16 @@ export class LoginFlowService {
     }
 
     try {
-      await this.deps.idpCookieSync.syncLinkedIdpCookies({
+      const result = await this.deps.idpCookieSync.syncLinkedIdpCookies({
         accountId,
         authId: authRefId,
         kind: identity.kind,
       });
+      appLogger.info(
+        `[登录] IdP Cookie 已同步 account=${accountId} kind=${identity.kind} copied=${result.copied}`,
+      );
     } catch {
-      // 同步失败降级：不阻断登录窗打开；不记录 Cookie 值等敏感内容。
+      appLogger.warn(`[登录] IdP Cookie 同步失败（不阻断） account=${accountId}`);
     }
   }
 
@@ -180,8 +296,6 @@ export class LoginFlowService {
       throw new AppError('NOT_IMPLEMENTED', 'Manual login is not available for this platform.');
     }
 
-    // manual 登录默认放行 GitHub + LinuxDo OAuth 域名，并把站点自身 host 纳入回跳域，
-    // 让站点原生 OAuth 能跳转到 IdP 并回跳站点完成登录。
     let siteHost: string | undefined;
     try {
       siteHost = new URL(account.baseUrl).hostname;

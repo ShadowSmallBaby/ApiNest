@@ -2,10 +2,24 @@ export type PlatformType = 'newapi' | 'sub2api' | 'cliproxyapi';
 export type SiteRouteProfile = 'modern' | 'classic' | 'legacy-panel';
 export type AuthState = 'unknown' | 'active' | 'expired' | 'error';
 export type KnownPage = 'home' | 'userCenter' | 'usage' | 'token' | 'login';
-export type LoginMode = 'manual' | 'linuxdo';
+/**
+ * 账户登录模式。
+ * - auto：默认；有 LinuxDo 前置条件时先无头自动，失败再受控窗口
+ * - manual：强制受控窗口
+ * - linuxdo：兼容旧调用；行为同 auto（优先无头）
+ */
+export type LoginMode = 'auto' | 'manual' | 'linuxdo';
 
 /** auth 身份类型：github/linuxdo 为分类标签，password 为可跨账户引用的账密凭据。 */
 export type AuthKind = 'github' | 'linuxdo' | 'password';
+
+/**
+ * auth 身份登录窗体的目标站点。
+ * - default：各 IdP 的默认登录起始页（github→github.com、linuxdo→connect.linux.do）
+ * - linuxdoMain：LinuxDo 论坛主站 linux.do（仅 linuxdo 类型）
+ * - linuxdoCredit：LinuxDo Credit 站 credit.linux.do（仅 linuxdo 类型）
+ */
+export type AuthLoginTarget = 'default' | 'linuxdoMain' | 'linuxdoCredit';
 
 /** auth 身份的非敏感视图（绝不含任何凭据明文）。 */
 export interface AuthIdentity {
@@ -17,6 +31,8 @@ export interface AuthIdentity {
   hasCredential: boolean;
   /** github/linuxdo 登录窗口是否走全局 Proxy 模板；password 类型不使用此项。 */
   useProxy: boolean;
+  /** 身份创建时间（ISO 字符串）；仅用于展示，非敏感。 */
+  createdAt: string;
 }
 
 export interface SiteRecord {
@@ -29,7 +45,23 @@ export interface SiteRecord {
   routeProfile: SiteRouteProfile;
   /** 该站点账户联网是否走全局 Proxy 模板；默认 false（直连）。 */
   useProxy: boolean;
+  /** 站点启用开关；禁用站点默认从站点广场「仅启用」视图中隐藏。 */
+  enabled: boolean;
+  /** 站点标签（纯管理性元数据，用于展示与筛选）。 */
+  tags: string[];
   accountCount: number;
+}
+
+/**
+ * 站点广场聚合摘要（一次性后端聚合，避免前端逐账户拉取）。
+ * balanceTotal：该站点各账户最新 balance 快照 remaining 之和；
+ * 全部账户无余额快照时为 null（红线：缺失/解析失败不伪造 0）。
+ * checkedInToday：今日已签到的去重账号数（分子），分母用 accountCount。
+ */
+export interface SiteSummary {
+  siteId: string;
+  balanceTotal: number | null;
+  checkedInToday: number;
 }
 
 export interface AccountRecord {
@@ -109,6 +141,19 @@ export interface ApiKeyRecord {
   createdTime: number;
   /** 过期时间（Unix 秒；-1 表示永不过期）。 */
   expiredTime: number;
+  /** 完整明文是否已惰性获取并加密入库（本地）；true 时「显示」可离线解密，无需联网。 */
+  hasPlaintext: boolean;
+}
+
+/** 批量获取明文入库的结果（不回传任何明文本身，仅计数）。 */
+export interface CaptureKeysResult {
+  accountId: string;
+  /** 本次尝试获取明文的密钥总数（原本未入库的）。 */
+  total: number;
+  /** 成功获取并加密入库的数量。 */
+  captured: number;
+  /** 获取失败的数量（会话过期、上游异常等）。 */
+  failed: number;
 }
 
 /** 模型（NewAPI pricing 行）的非敏感视图。 */
@@ -257,14 +302,23 @@ export interface DashboardOverview {
 
 /** 全局网络设置的非敏感视图（Secure DNS + Proxy 模板）；绝不含认证代理凭据等敏感项。 */
 export interface NetworkSettingsView {
-  secureDns:
-    | { mode: 'off' }
-    | { mode: 'automatic' }
-    | { mode: 'secure'; servers: string[] };
+  /**
+   * Secure DNS：mode 控制是否启用；servers 始终回传（关闭时也保留已填 DoH，便于再开启）。
+   */
+  secureDns: {
+    mode: 'off' | 'automatic' | 'secure';
+    servers: string[];
+  };
   proxy:
     | { mode: 'direct' }
     | { mode: 'system' }
     | { mode: 'fixed'; scheme: 'http' | 'https' | 'socks5'; host: string; port: number };
+  /**
+   * 本次更新是否已热应用 Secure DNS（仅 updateSettings 返回时有意义；get 可省略）。
+   */
+  dnsApplied?: boolean;
+  /** Secure DNS 热应用失败时的脱敏说明（成功时省略）。 */
+  dnsApplyError?: string;
 }
 
 export interface ApiNestBridge {
@@ -292,6 +346,10 @@ export interface ApiNestBridge {
     addAccount(siteId: string, input: import('./schemas').CreateSiteAccountInput): Promise<AccountRecord>;
     syncAccounts(siteId: string): Promise<SiteSyncResult>;
     checkInAccounts(siteId: string): Promise<BatchCheckInResult>;
+    /** 站点广场聚合：各站点余额合计与今日签到去重账号数。 */
+    getSummaries(): Promise<SiteSummary[]>;
+    /** 在系统浏览器打开站点官网（站点 baseUrl，已规范化、限 http/https）。 */
+    openWebsite(siteId: string): Promise<void>;
   };
   accounts: {
     list(): Promise<AccountRecord[]>;
@@ -309,8 +367,17 @@ export interface ApiNestBridge {
     status(): Promise<AuthStatus>;
     unlock(masterPassword: string): Promise<void>;
     lock(): Promise<void>;
-    openLogin(accountId: string, mode: LoginMode): Promise<LoginResult>;
+    /**
+     * 打开账户登录：默认 auto（先自动后手动窗口）。
+     * mode 可省略；manual 强制窗口。
+     */
+    openLogin(accountId: string, mode?: LoginMode): Promise<LoginResult>;
     clearSession(accountId: string): Promise<void>;
+    /**
+     * 将用户粘贴的 Cookie 写入账户 partition（仅目标站点 origin）。
+     * 2026-07-22 主人授权：允许手动导入站点 Cookie；值不回传、不写日志。
+     */
+    importCookies(accountId: string, cookieHeader: string): Promise<{ imported: number; authState: AuthState; message: string }>;
   };
   authIdentities: {
     list(): Promise<AuthIdentity[]>;
@@ -321,18 +388,34 @@ export interface ApiNestBridge {
     saveCredential(id: string, input: { username: string; password: string }): Promise<void>;
     /** password 类型：是否已保存凭据（仅布尔存在性）。 */
     hasCredential(id: string): Promise<boolean>;
-    /** github/linuxdo 类型：打开独立 auth 窗口登录一次。 */
-    openLogin(id: string): Promise<LoginResult>;
+    /**
+     * github/linuxdo 类型：打开独立 auth 窗口登录一次。
+     * target 指定登录窗体加载的站点（linuxdo 支持主站/Credit），默认各 IdP 起始页。
+     */
+    openLogin(id: string, target?: AuthLoginTarget): Promise<LoginResult>;
   };
   checkIn: {
     runOne(accountId: string): Promise<CheckInResult>;
     runAll(): Promise<BatchCheckInResult>;
   };
   keys: {
-    /** 拉取账户的密钥列表（key 字段始终脱敏，绝不含完整明文）。 */
+    /**
+     * 读取账户的本地密钥列表（key 字段始终脱敏，绝不含完整明文）。
+     * 本地表优先：只读本地持久化数据，不联网；每条带 hasPlaintext 标记明文是否已入库。
+     */
     listByAccount(accountId: string): Promise<ApiKeyRecord[]>;
-    /** 揭示单个密钥的完整明文；仅当次返回，绝不写日志/快照/缓存。 */
+    /**
+     * 刷新账户密钥：联网拉取远程列表，覆盖本地元数据（保留已入库明文引用），
+     * 清理远程已删除的密钥。仅刷新元数据，不获取明文（明文按需惰性获取）。
+     */
+    refresh(accountId: string): Promise<ApiKeyRecord[]>;
+    /**
+     * 揭示单个密钥的完整明文。本地已入库则离线解密返回；未入库则联网获取、
+     * 加密入库后返回。明文仅当次返回，绝不写日志/快照/明文缓存。
+     */
     reveal(accountId: string, tokenId: number): Promise<string>;
+    /** 批量获取账户内尚未入库的密钥明文并加密入库；仅返回计数，不回传任何明文。 */
+    captureAll(accountId: string): Promise<CaptureKeysResult>;
   };
   models: {
     /** 拉取账户的模型列表（含计费与账户可用标注）。 */
@@ -349,7 +432,7 @@ export interface ApiNestBridge {
   network: {
     /** 读取全局 Secure DNS 与 Proxy 模板设置。 */
     getSettings(): Promise<NetworkSettingsView>;
-    /** 更新全局网络设置；DNS 变更重启生效，Proxy 变更对已知 Session 热应用。 */
+    /** 更新全局网络设置；Secure DNS 与 Proxy 均尽量热应用（DNS 经 app.configureHostResolver）。 */
     updateSettings(input: import('./schemas').UpdateNetworkSettingsInput): Promise<NetworkSettingsView>;
   };
   pages: {

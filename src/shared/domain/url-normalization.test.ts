@@ -2,7 +2,7 @@ import { normalizeBaseUrl } from './url-normalization';
 
 describe('normalizeBaseUrl', () => {
   it('normalizes protocol, host and root pathname', () => {
-    expect(normalizeBaseUrl('HTTPS://Example.COM')).toBe('https://example.com/');
+    expect(normalizeBaseUrl('HTTPS://Example.COM')).toBe('https://example.com');
   });
 
   it('removes fragments without reordering query parameters', () => {

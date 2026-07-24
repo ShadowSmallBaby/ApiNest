@@ -97,24 +97,35 @@ export function normalizeProxyPort(raw: number): number {
   return raw;
 }
 
+/**
+ * 解析 Secure DNS。
+ * - secure：至少一台合法 DoH
+ * - off / automatic：仍可保留已填 servers（关闭不丢配置；再开可直接用）
+ *   若 mode=automatic 且 servers 非空，领域仍记 automatic（启用语义由 UI 开关决定），
+ *   运行时 Host Resolver 用 automatic；用户若勾选启用且填了服务器，UI 会以 secure 提交。
+ */
 function parseSecureDns(mode: string, servers: string[]): SecureDnsConfig {
   if (!isSecureDnsMode(mode)) {
     throw new AppError('INVALID_ARGUMENT', `Unknown secure DNS mode: ${mode}`);
   }
-  if (mode !== 'secure') {
-    // off / automatic 不携带自定义 DoH 服务器；清空以免残留脏数据。
-    return { mode, servers: [] };
-  }
-  if (servers.length === 0) {
-    throw new AppError('INVALID_ARGUMENT', 'Secure DNS mode requires at least one DoH server.');
-  }
   if (servers.length > MAX_DOH_SERVERS) {
     throw new AppError('INVALID_ARGUMENT', `At most ${MAX_DOH_SERVERS} DoH servers are allowed.`);
   }
-  const normalized = servers.map(normalizeDohServer);
-  // 去重且保持首次出现顺序。
-  const unique = Array.from(new Set(normalized));
-  return { mode: 'secure', servers: unique };
+
+  const unique =
+    servers.length === 0
+      ? []
+      : Array.from(new Set(servers.map(normalizeDohServer)));
+
+  if (mode === 'secure') {
+    if (unique.length === 0) {
+      throw new AppError('INVALID_ARGUMENT', 'Secure DNS mode requires at least one DoH server.');
+    }
+    return { mode: 'secure', servers: unique };
+  }
+
+  // off / automatic：保留规范化后的 servers 列表（可为空）。
+  return { mode, servers: unique };
 }
 
 function parseProxyTemplate(
@@ -163,12 +174,13 @@ export function parseNetworkSettings(raw: RawNetworkSettings): NetworkSettings {
   };
 }
 
-/** 将领域 NetworkSettings 展平回持久层字段；fixed 之外的代理字段一律置空。 */
+/** 将领域 NetworkSettings 展平回持久层字段；fixed 之外的代理字段一律置空；DNS servers 始终持久化。 */
 export function toRawNetworkSettings(settings: NetworkSettings): RawNetworkSettings {
   const { proxy, secureDns } = settings;
   return {
     secureDnsMode: secureDns.mode,
-    secureDnsServers: secureDns.mode === 'secure' ? secureDns.servers : [],
+    // 关闭时也保留已填 DoH，避免用户关开关丢配置。
+    secureDnsServers: secureDns.servers,
     proxyMode: proxy.mode,
     fixedProxyScheme: proxy.mode === 'fixed' ? proxy.scheme : null,
     fixedProxyHost: proxy.mode === 'fixed' ? proxy.host : null,

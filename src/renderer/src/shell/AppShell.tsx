@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { AccountRecord, KnownPage } from '../../../shared/ipc/bridge';
+import { useEffect, useState } from 'react';
+import type { KnownPage } from '../../../shared/ipc/bridge';
 import { SitesPage } from '../features/sites/SitesPage';
 import { KeysPage } from '../features/keys/KeysPage';
 import { ModelsPage } from '../features/models/ModelsPage';
@@ -11,8 +11,17 @@ import { EmbeddedBrowserHost } from './EmbeddedBrowserHost';
 import { OAuthPage } from './OAuthPage';
 import { SettingsPage } from './SettingsPage';
 import { TitleBar } from './TitleBar';
-import { LockIcon, NavIcon } from '../components/icons';
+import { CollapseIcon, LockIcon, NavIcon, SettingsGearIcon } from '../components/icons';
 import { NAV_ITEMS, type NavItem, type NavKey } from './navigation';
+
+/** 侧栏折叠态的 localStorage 键；仅存 '0'/'1'，非敏感。 */
+const SIDEBAR_COLLAPSED_KEY = 'apinest.sidebar.collapsed';
+
+/**
+ * 系统设置项。settings 不在 NAV_ITEMS（主导航）中，由侧栏底部齿轮触发，
+ * 故单列一个 NavItem 供 activeItem 推导与内容渲染，避免 fallback 回仪表盘。
+ */
+const SETTINGS_ITEM: NavItem = { key: 'settings', label: '系统设置', implemented: true };
 
 interface AppShellProps {
   version: string;
@@ -72,34 +81,19 @@ function renderContent(
 export function AppShell(props: AppShellProps): React.JSX.Element {
   const [activeKey, setActiveKey] = useState<NavKey>('dashboard');
   const [embedded, setEmbedded] = useState<EmbeddedRequest | null>(null);
-  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
-  const activeItem = NAV_ITEMS.find(item => item.key === activeKey) ?? NAV_ITEMS[0];
+  // 侧栏折叠态持久化到 localStorage，重开应用保持上次选择。
+  const [collapsed, setCollapsed] = useState<boolean>(
+    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
+  );
+  // settings 不在主导航列表，单独兜底为 SETTINGS_ITEM，否则 find 落空会 fallback 回仪表盘。
+  const activeItem =
+    activeKey === 'settings'
+      ? SETTINGS_ITEM
+      : NAV_ITEMS.find(item => item.key === activeKey) ?? NAV_ITEMS[0];
 
   useEffect(() => {
-    let cancelled = false;
-    window.apinest.accounts
-      .list()
-      .then(list => {
-        if (!cancelled) setAccounts(list);
-      })
-      .catch(() => {
-        /* 摘要为辅助信息，读取失败不打断主流程。 */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeKey]);
-
-  const summary = useMemo(
-    () => ({
-      total: accounts.length,
-      active: accounts.filter(account => account.authState === 'active').length,
-      attention: accounts.filter(
-        account => account.authState === 'expired' || account.authState === 'error',
-      ).length,
-    }),
-    [accounts],
-  );
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
+  }, [collapsed]);
 
   const handleSelectNav = (key: NavKey): void => {
     // 切换导航先关闭内嵌浏览：host 卸载时会销毁内嵌视图（单例生命周期）。
@@ -113,21 +107,14 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
     <div className="app-shell-root">
       <TitleBar />
       <div className="app-shell-body">
-        <aside className="app-sidebar">
-          <div className="sidebar-brand">
-            <div className="sidebar-brand-logo">A</div>
-            <div className="sidebar-brand-text">
-              <span className="sidebar-brand-name">ApiNest</span>
-              <span className="sidebar-brand-sub">API 账号管家</span>
-            </div>
-          </div>
-
+        <aside className={`app-sidebar${collapsed ? ' app-sidebar--collapsed' : ''}`}>
           <nav className="app-nav">
             {NAV_ITEMS.map(item => (
               <button
                 key={item.key}
                 type="button"
                 className={`app-nav-item${item.key === activeKey ? ' active' : ''}`}
+                title={item.label}
                 onClick={() => handleSelectNav(item.key)}
               >
                 <span className="app-nav-icon">
@@ -140,30 +127,35 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
           </nav>
 
           <div className="sidebar-footer">
-            <div className="sidebar-summary">
-              <div className="sidebar-summary-item">
-                <span className="sidebar-summary-value">{summary.total}</span>
-                <span className="sidebar-summary-label">账号</span>
-              </div>
-              <div className="sidebar-summary-item">
-                <span className="sidebar-summary-value">{summary.active}</span>
-                <span className="sidebar-summary-label">活跃</span>
-              </div>
-              <div className="sidebar-summary-item">
-                <span className="sidebar-summary-value">{summary.attention}</span>
-                <span className="sidebar-summary-label">待处理</span>
-              </div>
-            </div>
             <div className="sidebar-footer-row">
-              <span className="sidebar-version">v{props.version}</span>
               <button
                 type="button"
-                className="subtle-button"
+                className={`sidebar-icon-button${activeKey === 'settings' ? ' active' : ''}`}
+                aria-label="系统设置"
+                title="系统设置"
+                onClick={() => handleSelectNav('settings')}
+              >
+                <SettingsGearIcon />
+              </button>
+              <button
+                type="button"
+                className="sidebar-icon-button"
+                aria-label="锁定"
+                title="锁定"
                 onClick={props.onLock}
                 disabled={props.isBusy}
               >
                 <LockIcon />
-                锁定
+              </button>
+              <button
+                type="button"
+                className="sidebar-icon-button"
+                aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+                title={collapsed ? '展开侧栏' : '收起侧栏'}
+                aria-pressed={collapsed}
+                onClick={() => setCollapsed(current => !current)}
+              >
+                <CollapseIcon collapsed={collapsed} />
               </button>
             </div>
           </div>

@@ -21,6 +21,8 @@ function createSite(id: string, overrides: Partial<SiteEntity> = {}): SiteEntity
     baseUrl: id === SITE_A_ID ? 'https://a.example.com/' : 'https://b.example.com/',
     routeProfile: 'modern',
     useProxy: false,
+    enabled: true,
+    tags: [],
     recordVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,

@@ -16,6 +16,8 @@ const siteA: SiteRecord = {
   routeProfile: 'modern',
   accountCount: 2,
   useProxy: false,
+  enabled: true,
+  tags: [],
 };
 
 const siteB: SiteRecord = {
@@ -26,6 +28,8 @@ const siteB: SiteRecord = {
   routeProfile: 'classic',
   accountCount: 1,
   useProxy: false,
+  enabled: true,
+  tags: [],
 };
 
 const accounts: AccountRecord[] = [
@@ -94,7 +98,7 @@ describe('站点卡片广场交互契约', () => {
     const emptyState = buildCardActionState(emptySite, accounts, false);
     const busyState = buildCardActionState(siteA, accounts, true);
 
-    expect(emptyState.view).toEqual({ accountCount: 0, active: 0, expired: 0, error: 0, unknown: 0 });
+    expect(emptyState.view).toEqual({ accountCount: 0, active: 0, expired: 0, error: 0, unknown: 0, balanceTotal: null, checkedInToday: 0, overallStatus: 'unknown' });
     expect(emptyState.syncDisabled).toBe(true);
     expect(emptyState.checkInDisabled).toBe(true);
     expect(emptyState.editDisabled).toBe(false);

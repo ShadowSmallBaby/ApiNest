@@ -136,6 +136,9 @@ export function parseNewApiTokens(bodyText: string, accountId: string): ApiKeyRe
       status: finiteNumberOr(raw.status, 0),
       createdTime: finiteNumberOr(raw.created_time, 0),
       expiredTime: finiteNumberOr(raw.expired_time, -1),
+      // 网络层刚解析出的记录，本地必无明文；真实的 hasPlaintext 由 KeysService
+      // 从本地密钥表计算后覆盖。此处填 false 仅为满足类型契约。
+      hasPlaintext: false,
     });
   }
 

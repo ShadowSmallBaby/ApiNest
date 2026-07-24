@@ -1,26 +1,43 @@
-import type { AccountRecord, SiteRecord } from '../../../../shared/ipc/bridge';
-import { buildSiteCardView, routeProfileLabel } from './site-card-view';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
+import type { AccountRecord, SiteRecord, SiteSummary } from '../../../../shared/ipc/bridge';
+import { ExternalLinkIcon, KebabIcon } from '../../components/icons';
+import {
+  balanceTotalLabel,
+  buildSiteCardView,
+  overallStatusLabel,
+  platformLabel,
+} from './site-card-view';
 
 interface SiteCardProps {
   site: SiteRecord;
   accounts: AccountRecord[];
+  summary?: SiteSummary;
   isBusy: boolean;
   onOpen: () => void;
   onEdit: () => void;
   onSync: () => void;
   onCheckIn: () => void;
+  onDelete: () => void;
+  onOpenWebsite: () => void;
 }
 
+/**
+ * 站点广场卡片。头部为站名 + kebab 菜单（打开/同步/签到/编辑/删除），下接平台徽章
+ * 与官网外链、状态圆点 + 账号数、余额合计、今日签到 x/y。禁用站点整体灰化并加角标。
+ * 卡片本体可点/键盘打开详情，kebab 与官网按钮阻止冒泡以免误触发打开。
+ */
 export function SiteCard(props: SiteCardProps): React.JSX.Element {
-  const view = buildSiteCardView(props.site, props.accounts);
-  const action = (callback: () => void) => (event: React.MouseEvent<HTMLButtonElement>): void => {
+  const view = buildSiteCardView(props.site, props.accounts, props.summary);
+  const disabled = props.site.enabled === false;
+  const stop = (callback: () => void) => (event: React.MouseEvent): void => {
     event.stopPropagation();
     callback();
   };
+  const noAccounts = view.accountCount === 0;
 
   return (
     <article
-      className="site-card"
+      className={`site-card${disabled ? ' site-card--disabled' : ''}`}
       role="button"
       aria-label={`打开站点 ${props.site.name} 的详情`}
       onClick={props.onOpen}
@@ -36,21 +53,62 @@ export function SiteCard(props: SiteCardProps): React.JSX.Element {
       }}
     >
       <div className="site-card-head">
-        <div><h3>{props.site.name}</h3><p>{props.site.platform} · {routeProfileLabel(props.site)}</p></div>
-        <span className="site-account-count">{view.accountCount} 个账号</span>
+        <h3>{props.site.name}</h3>
+        <div className="site-card-head-right">
+          {disabled ? <span className="site-card-disabled-tag">已禁用</span> : null}
+          <Menu>
+            <MenuButton
+              className="site-card-menu-button"
+              aria-label="更多操作"
+              disabled={props.isBusy}
+              onClick={event => event.stopPropagation()}
+            >
+              <KebabIcon />
+            </MenuButton>
+            <MenuItems anchor="bottom end" className="site-card-menu">
+              <MenuItem>
+                <button type="button" className="site-card-menu-item" onClick={stop(props.onOpen)}>打开</button>
+              </MenuItem>
+              <MenuItem>
+                <button type="button" className="site-card-menu-item" disabled={noAccounts} onClick={stop(props.onSync)}>同步</button>
+              </MenuItem>
+              <MenuItem>
+                <button type="button" className="site-card-menu-item" disabled={noAccounts} onClick={stop(props.onCheckIn)}>签到</button>
+              </MenuItem>
+              <MenuItem>
+                <button type="button" className="site-card-menu-item" onClick={stop(props.onEdit)}>编辑</button>
+              </MenuItem>
+              <MenuItem>
+                <button type="button" className="site-card-menu-item danger" onClick={stop(props.onDelete)}>删除</button>
+              </MenuItem>
+            </MenuItems>
+          </Menu>
+        </div>
       </div>
-      <p className="site-card-url">{props.site.baseUrl}</p>
-      <div className="site-health-row">
-        <span className="auth-badge auth-active">有效 {view.active}</span>
-        <span className="auth-badge auth-expired">过期 {view.expired}</span>
-        <span className="auth-badge auth-error">异常 {view.error}</span>
-        <span className="auth-badge">未知 {view.unknown}</span>
+
+      <div className="site-card-meta-row">
+        <span className={`platform-badge platform-${props.site.platform}`}>{platformLabel(props.site)}</span>
+        <button type="button" className="site-card-website" onClick={stop(props.onOpenWebsite)} title="在系统浏览器打开官网">
+          官网 <ExternalLinkIcon />
+        </button>
       </div>
-      <div className="site-card-actions">
-        <button type="button" disabled={props.isBusy || view.accountCount === 0} onClick={action(props.onSync)}>同步</button>
-        <button type="button" disabled={props.isBusy || view.accountCount === 0} onClick={action(props.onCheckIn)}>签到</button>
-        <button type="button" className="secondary-button" disabled={props.isBusy} onClick={action(props.onEdit)}>编辑</button>
-      </div>
+
+      <p className="site-card-status">
+        <span className={`site-status-dot status-${view.overallStatus}`} aria-hidden />
+        {overallStatusLabel(view.overallStatus)} · {view.accountCount} 个账号
+      </p>
+
+      <p className="site-card-balance">{balanceTotalLabel(view.balanceTotal)}</p>
+
+      {props.site.tags.length > 0 ? (
+        <div className="site-card-tags">
+          {props.site.tags.map(tag => (
+            <span key={tag} className="site-tag-chip">{tag}</span>
+          ))}
+        </div>
+      ) : null}
+
+      <p className="site-card-checkin">签到 {view.checkedInToday}/{view.accountCount}</p>
     </article>
   );
 }

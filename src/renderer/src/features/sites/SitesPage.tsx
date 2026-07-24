@@ -7,6 +7,7 @@ import type {
   CheckInResult,
   KnownPage,
   SiteRecord,
+  SiteSummary,
 } from '../../../../shared/ipc/bridge';
 import { getSafeErrorMessage } from '../../lib/error-message';
 import type { EmbeddedRequest } from '../../shell/AppShell';
@@ -30,6 +31,12 @@ import {
   toUpdateSiteInput,
   type SiteFormValues,
 } from './site-form';
+import {
+  DEFAULT_SITE_FILTER,
+  collectSiteTags,
+  filterSites,
+  type SiteFilter,
+} from './sites-filter';
 
 const PAGE_TITLES: Record<KnownPage, string> = {
   home: '首页', userCenter: '用户中心', usage: '用量页', token: 'Token 页', login: '登录页',
@@ -62,6 +69,8 @@ interface ConfirmSpec {
  */
 export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: EmbeddedRequest) => void }): React.JSX.Element {
   const [sites, setSites] = useState<SiteRecord[]>([]);
+  const [summaries, setSummaries] = useState<Map<string, SiteSummary>>(new Map());
+  const [filter, setFilter] = useState<SiteFilter>(DEFAULT_SITE_FILTER);
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [authIdentities, setAuthIdentities] = useState<AuthIdentity[]>([]);
   const [view, setView] = useState<'grid' | 'detail'>('grid');
@@ -70,6 +79,7 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
   const [snapshots, setSnapshots] = useState<AccountSnapshot[]>([]);
   const [capabilities, setCapabilities] = useState<AccountPageCapabilities | null>(null);
   const [checkInResult, setCheckInResult] = useState<CheckInResult | null>(null);
+  const [loginMessage, setLoginMessage] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   const [isBusy, setIsBusy] = useState(true);
@@ -88,12 +98,14 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
   const selectedAccount = siteAccounts.find(account => account.id === selectedAccountId) ?? null;
 
   const load = async (): Promise<void> => {
-    const [nextSites, nextAccounts, nextAuth] = await Promise.all([
-      window.apinest.sites.list(), window.apinest.accounts.list(), window.apinest.authIdentities.list(),
+    const [nextSites, nextAccounts, nextAuth, nextSummaries] = await Promise.all([
+      window.apinest.sites.list(), window.apinest.accounts.list(),
+      window.apinest.authIdentities.list(), window.apinest.sites.getSummaries(),
     ]);
     setSites(nextSites);
     setAccounts(nextAccounts);
     setAuthIdentities(nextAuth);
+    setSummaries(new Map(nextSummaries.map(item => [item.siteId, item])));
   };
 
   useEffect(() => {
@@ -209,6 +221,10 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
     });
   };
 
+  const openWebsite = (site: SiteRecord): void => {
+    void run(async () => { await window.apinest.sites.openWebsite(site.id); });
+  };
+
   const deleteAccount = (account: AccountRecord): void => {
     setConfirm({
       title: '删除账号',
@@ -272,6 +288,10 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
     }
   };
 
+  // 站点广场筛选：过滤后的站点列表 + 可选标签集合（来自全部站点，去重保序）。
+  const visibleSites = filterSites(sites, summaries, filter);
+  const allTags = collectSiteTags(sites);
+
   return (
     <>
       {view === 'detail' && selectedSite ? (
@@ -294,17 +314,35 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
               pageCapabilities={capabilities}
               refreshError={null}
               checkInResult={checkInResult}
+              loginMessage={loginMessage}
               onEdit={() => setPanel({ kind: 'edit-account' })}
               onCopy={() => accountAction(async () => { const copied = await window.apinest.accounts.copy(selectedAccount.id); await load(); setSelectedAccountId(copied.id); })}
               onDelete={() => deleteAccount(selectedAccount)}
               onRefresh={() => accountAction(async () => { await window.apinest.accounts.refresh(selectedAccount.id); setSnapshots(await window.apinest.accounts.getSnapshots(selectedAccount.id)); })}
-              onOpenLogin={mode => accountAction(async () => { await window.apinest.auth.openLogin(selectedAccount.id, mode); })}
+              onOpenLogin={() => accountAction(async () => {
+                setLoginMessage('正在登录…');
+                try {
+                  const result = await window.apinest.auth.openLogin(selectedAccount.id, 'auto');
+                  setLoginMessage(result.message);
+                  await load();
+                  setSnapshots(await window.apinest.accounts.getSnapshots(selectedAccount.id));
+                } catch (error) {
+                  setLoginMessage(getSafeErrorMessage(error));
+                  throw error;
+                }
+              })}
               onCheckIn={() => accountAction(async () => { setCheckInResult(await window.apinest.checkIn.runOne(selectedAccount.id)); })}
               onOpenInApp={page => onOpenEmbedded({ accountId: selectedAccount.id, page, title: `${selectedSite.name} · ${selectedAccount.displayName} · ${PAGE_TITLES[page]}` })}
               onOpenExternal={page => accountAction(async () => { await window.apinest.pages.openExternal(selectedAccount.id, page); })}
               onClearSession={() => clearAccountSession(selectedAccount)}
               authIdentities={authIdentities}
               onLinkAuth={authId => accountAction(async () => { await window.apinest.accounts.linkAuth(selectedAccount.id, authId); await load(); })}
+              onImportCookies={async cookieHeader => {
+                setLoginMessage(null);
+                const result = await window.apinest.auth.importCookies(selectedAccount.id, cookieHeader);
+                setLoginMessage(result.message);
+                await load();
+              }}
             />
           ) : (
             <p className="empty-state">选择或添加一个账号。</p>
@@ -313,12 +351,58 @@ export function SitesPage({ onOpenEmbedded }: { onOpenEmbedded: (request: Embedd
       ) : (
         <section className="sites-page">
           <div className="sites-page-header">
-            <div><p className="eyebrow">站点管理</p><h2>站点广场</h2></div>
+            <h2>站点广场</h2>
             <button type="button" disabled={isBusy} onClick={() => setPanel({ kind: 'create-site' })}>＋ 新增站点</button>
+          </div>
+          <div className="sites-toolbar">
+            <input
+              className="sites-search"
+              type="search"
+              value={filter.keyword}
+              placeholder="搜索站名或网址"
+              onChange={e => setFilter(current => ({ ...current, keyword: e.target.value }))}
+            />
+            <label className="sites-toolbar-toggle">
+              <input
+                type="checkbox"
+                checked={filter.onlyEnabled}
+                onChange={e => setFilter(current => ({ ...current, onlyEnabled: e.target.checked }))}
+              />
+              仅启用
+            </label>
+            <label className="sites-toolbar-toggle">
+              <input
+                type="checkbox"
+                checked={filter.notCheckedInToday}
+                onChange={e => setFilter(current => ({ ...current, notCheckedInToday: e.target.checked }))}
+              />
+              今日未签到
+            </label>
+            {allTags.length > 0 ? (
+              <div className="sites-tag-filter">
+                {allTags.map(tag => {
+                  const active = filter.tags.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      className={`sites-tag-filter-chip${active ? ' active' : ''}`}
+                      aria-pressed={active}
+                      onClick={() => setFilter(current => ({
+                        ...current,
+                        tags: active ? current.tags.filter(item => item !== tag) : [...current.tags, tag],
+                      }))}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
           {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
           {message ? <p className="hint">{message}</p> : null}
-          <SiteGrid sites={sites} accounts={accounts} isBusy={isBusy} onOpen={openSite} onEdit={site => { setSelectedSiteId(site.id); setPanel({ kind: 'edit-site' }); }} onSync={syncSite} onCheckIn={checkInSite} />
+          <SiteGrid sites={visibleSites} accounts={accounts} summaries={summaries} isBusy={isBusy} onOpen={openSite} onEdit={site => { setSelectedSiteId(site.id); setPanel({ kind: 'edit-site' }); }} onSync={syncSite} onCheckIn={checkInSite} onDelete={deleteSite} onOpenWebsite={openWebsite} />
         </section>
       )}
 

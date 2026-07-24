@@ -3,7 +3,12 @@ import { SiteService } from './site-service';
 
 const authId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-function createHarness() {
+interface HarnessOptions {
+  balanceBySite?: Map<string, { total: number; count: number }>;
+  checkedInBySite?: Map<string, number>;
+}
+
+function createHarness(options: HarnessOptions = {}) {
   const sites = new Map<string, any>();
   const accounts = new Map<string, any>();
   const cleared: string[] = [];
@@ -34,6 +39,8 @@ function createHarness() {
       },
     },
     sessionCleaner: { clearAccountSession: async id => { cleared.push(id); } },
+    snapshotRepository: { sumBalanceBySite: () => options.balanceBySite ?? new Map() },
+    checkInResultRepository: { countCheckedInTodayBySite: () => options.checkedInBySite ?? new Map() },
   });
   return { service, sites, accounts, cleared, detectedBaseUrls };
 }
@@ -47,7 +54,7 @@ describe('SiteService', () => {
       confidence: 'high',
       reason: 'NewAPI marker found.',
     });
-    expect(detectedBaseUrls).toEqual(['https://example.com/']);
+    expect(detectedBaseUrls).toEqual(['https://example.com']);
   });
 
   it('creates one site and its first isolated account atomically', () => {
@@ -56,7 +63,7 @@ describe('SiteService', () => {
       name: '主站', platform: 'newapi', baseUrl: 'HTTPS://Example.COM', routeProfile: 'modern',
       firstAccount: { displayName: '账号 A', authId },
     });
-    expect(result.site).toMatchObject({ name: '主站', baseUrl: 'https://example.com/', routeProfile: 'modern', accountCount: 1 });
+    expect(result.site).toMatchObject({ name: '主站', baseUrl: 'https://example.com', routeProfile: 'modern', accountCount: 1 });
     expect(result.account).toMatchObject({ siteId: result.site.id, siteName: '主站', authRefId: authId });
     expect(sites).toHaveLength(1);
     expect(accounts).toHaveLength(1);
@@ -112,5 +119,36 @@ describe('SiteService', () => {
     expect(cleared).toHaveLength(2);
     expect(Array.from(accounts.values()).every((account: any) => account.siteId === other.site.id)).toBe(true);
     expect(sites.has(other.site.id)).toBe(true);
+  });
+
+  it('aggregates balance totals and today check-in counts per site', () => {
+    const balanceBySite = new Map([['known', { total: 1234, count: 2 }]]);
+    const checkedInBySite = new Map([['known', 2]]);
+    const { service, sites } = createHarness({ balanceBySite, checkedInBySite });
+    // 直接种入两个站点：一个有聚合、一个无聚合，验证 null 与 0 的边界。
+    sites.set('known', { id: 'known', name: '有余额站', platform: 'newapi', baseUrl: 'https://known.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], recordVersion: 1, createdAt: '', updatedAt: '' });
+    sites.set('empty', { id: 'empty', name: '无余额站', platform: 'newapi', baseUrl: 'https://empty.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], recordVersion: 1, createdAt: '', updatedAt: '' });
+
+    const summaries = service.getSummaries();
+
+    expect(summaries).toContainEqual({ siteId: 'known', balanceTotal: 1234, checkedInToday: 2 });
+    // 无 balance 快照的站点：balanceTotal 为 null（红线：不伪造 0），checkedInToday 为 0。
+    expect(summaries).toContainEqual({ siteId: 'empty', balanceTotal: null, checkedInToday: 0 });
+  });
+
+  it('never fabricates a zero balance when the aggregate count is zero', () => {
+    // count=0 表示该站点没有任何可解析的 balance 快照，total 必须降级为 null。
+    const balanceBySite = new Map([['s', { total: 0, count: 0 }]]);
+    const { service, sites } = createHarness({ balanceBySite });
+    sites.set('s', { id: 's', name: 'S', platform: 'newapi', baseUrl: 'https://s.example.com', routeProfile: 'modern', useProxy: false, enabled: true, tags: [], recordVersion: 1, createdAt: '', updatedAt: '' });
+
+    expect(service.getSummaries()).toContainEqual({ siteId: 's', balanceTotal: null, checkedInToday: 0 });
+  });
+
+  it('returns the normalized site base url for opening the website', () => {
+    const { service } = createHarness();
+    const created = service.create({ name: 'A', platform: 'newapi', baseUrl: 'https://a.example.com', routeProfile: 'modern', firstAccount: { displayName: 'A1' } });
+    expect(service.openWebsiteUrl(created.site.id)).toBe('https://a.example.com');
+    expect(() => service.openWebsiteUrl('00000000-0000-4000-8000-000000000000')).toThrow('Site was not found.');
   });
 });

@@ -19,6 +19,8 @@ function resolveAppIcon(): string | undefined {
 }
 
 const MAIN_WINDOW_OPTIONS: Electron.BrowserWindowConstructorOptions = {
+  // 窗口标题（Alt+Tab / 任务栏悬停显示；无边框不渲染系统标题栏，故不影响自绘栏）。
+  title: 'ApiNest',
   width: 1280,
   height: 800,
   minWidth: 1024,

@@ -17,6 +17,10 @@ export interface SiteFormValues {
   routeProfile: SiteRouteProfile;
   /** 该站点账户联网是否走全局 Proxy 模板；默认 false（直连）。 */
   useProxy: boolean;
+  /** 站点启用开关；默认 true（启用）。 */
+  enabled: boolean;
+  /** 站点标签（纯管理性元数据，用于展示与筛选）。 */
+  tags: string[];
   firstAccountName: string;
   firstAccountNote: string;
   firstAuthId: string;
@@ -36,6 +40,8 @@ export const EMPTY_SITE_FORM: SiteFormValues = {
   linuxDoClientId: '',
   routeProfile: 'modern',
   useProxy: false,
+  enabled: true,
+  tags: [],
   firstAccountName: '',
   firstAccountNote: '',
   firstAuthId: '',
@@ -50,6 +56,8 @@ export function siteToFormValues(site: SiteRecord): SiteFormValues {
     linuxDoClientId: site.linuxDoClientId ?? '',
     routeProfile: site.routeProfile,
     useProxy: site.useProxy,
+    enabled: site.enabled,
+    tags: [...site.tags],
     firstAccountName: '',
     firstAccountNote: '',
     firstAuthId: '',
@@ -66,6 +74,20 @@ export function validateSiteForm(values: SiteFormValues, includeFirstAccount: bo
   return null;
 }
 
+/** 清洗表单标签：逐个去空白、剔除空串、去重（保序），至多 12 个（与后端 schema 一致）。 */
+export function normalizeFormTags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim();
+    if (tag.length === 0 || seen.has(tag)) continue;
+    seen.add(tag);
+    result.push(tag);
+    if (result.length >= 12) break;
+  }
+  return result;
+}
+
 export function toCreateSiteInput(values: SiteFormValues): CreateSiteInput {
   return {
     name: values.name.trim(),
@@ -75,6 +97,8 @@ export function toCreateSiteInput(values: SiteFormValues): CreateSiteInput {
     linuxDoClientId: values.linuxDoClientId.trim() || undefined,
     routeProfile: values.platform === 'newapi' ? values.routeProfile : 'modern',
     useProxy: values.useProxy,
+    enabled: values.enabled,
+    tags: normalizeFormTags(values.tags),
     firstAccount: {
       displayName: values.firstAccountName.trim(),
       note: values.firstAccountNote.trim() || undefined,
@@ -92,6 +116,8 @@ export function toUpdateSiteInput(values: SiteFormValues): UpdateSiteInput {
     linuxDoClientId: values.linuxDoClientId.trim() || undefined,
     routeProfile: values.platform === 'newapi' ? values.routeProfile : 'modern',
     useProxy: values.useProxy,
+    enabled: values.enabled,
+    tags: normalizeFormTags(values.tags),
   };
 }
 

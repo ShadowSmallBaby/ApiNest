@@ -27,6 +27,8 @@
 
 **2026-07-20 主人授权改写此红线**：允许受限的 IdP Cookie 注入（见 1.2 决策 3 修订）。因此 github/linuxdo 的复用从「仅分类标签」升级为「IdP 会话可注入账户登录流」——站点原生 OAuth 发起时，账户 partition 已持有对应 IdP 的登录态，可少确认或直接回跳。站点会话本身仍严格按账户隔离，被复制的只有 IdP 白名单域下的 Cookie，绝不含站点自身 Cookie。password 类型仍走表单填充，不涉及会话搬运。
 
+**2026-07-22 主人授权（LinuxDo 无头自动登录）**：在已同步 IdP Cookie 且账户配置了 `linuxDoClientId` 时，主进程可用账户 partition 的 `session.fetch` 自动完成 NewAPI OAuth 协议——`GET /api/oauth/state` → `connect.linux.do/oauth2/authorize` → 抽取并 GET 同意链 `/oauth2/approve/…` → 站点回调 `/api/oauth/linuxdo?code&state`。`code`/`state` 仅编排栈瞬态，不落库、不写日志、不回传 Renderer。失败（未登录 IdP、验证码、无同意按钮、state 失败等）降级既有受控窗口；回调 Location 非本站点 host 时**拒绝跟随且不开窗伪装成功**。成功后尽力引导站内 `siteUserId`；不得伪造 `active`。
+
 ## 2. 数据模型
 
 ### 2.1 新增 `auth_identities` 表（迁移 004）

@@ -9,6 +9,8 @@ export const IPC_CHANNELS = {
     addAccount: 'sites:add-account',
     syncAccounts: 'sites:sync-accounts',
     checkInAccounts: 'sites:checkin-accounts',
+    getSummaries: 'sites:get-summaries',
+    openWebsite: 'sites:open-website',
   },
   accounts: {
     list: 'accounts:list',
@@ -30,6 +32,7 @@ export const IPC_CHANNELS = {
     lock: 'auth:lock',
     openLogin: 'auth:open-login',
     clearSession: 'auth:clear-session',
+    importCookies: 'auth:import-cookies',
   },
   authIdentities: {
     list: 'auth-identities:list',
@@ -46,7 +49,9 @@ export const IPC_CHANNELS = {
   },
   keys: {
     listByAccount: 'keys:list-by-account',
+    refresh: 'keys:refresh',
     reveal: 'keys:reveal',
+    captureAll: 'keys:capture-all',
   },
   models: {
     listByAccount: 'models:list-by-account',

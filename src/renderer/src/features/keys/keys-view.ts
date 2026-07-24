@@ -93,3 +93,57 @@ export async function loadAccountsKeys(
     }),
   );
 }
+
+/** 扁平密钥行：一条密钥 + 其所属账户引用 + 「站点·账号」展示标签，供统一列表渲染。 */
+export interface KeyRow {
+  account: AccountRecord;
+  key: ApiKeyRecord;
+  /** 「站点名 · 账号名」展示标签（多账号时区分来源）。 */
+  siteAccountLabel: string;
+}
+
+/**
+ * 把逐账户结果拍平为统一扁平行（仅 loaded 账户的密钥）。
+ * error 账户不进扁平列表，由上层单独展示错误块以保留逐账户隔离提示。
+ * 保持账户顺序与账户内密钥顺序（本地表已按创建时间稳定排序）。
+ */
+export function flattenKeyRows(results: AccountKeysResult[]): KeyRow[] {
+  const rows: KeyRow[] = [];
+  for (const result of results) {
+    if (result.status !== 'loaded') {
+      continue;
+    }
+    const siteAccountLabel = `${result.account.siteName ?? '—'} · ${result.account.displayName}`;
+    for (const key of result.keys) {
+      rows.push({ account: result.account, key, siteAccountLabel });
+    }
+  }
+  return rows;
+}
+
+/** 仅保留加载失败的账户结果（用于统一列表下方的逐账户错误提示）。 */
+export function failedAccounts(results: AccountKeysResult[]): AccountKeysResult[] {
+  return results.filter(result => result.status === 'error');
+}
+
+/**
+ * 格式化密钥时间（Unix 秒 → 本地日期时间）。
+ * 0 或负值（如永不过期哨兵 -1）视为无意义，返回占位符。
+ */
+export function formatKeyTime(unixSeconds: number): string {
+  if (!Number.isFinite(unixSeconds) || unixSeconds <= 0) {
+    return '—';
+  }
+  return new Date(unixSeconds * 1000).toLocaleString();
+}
+
+/**
+ * 过滤出可同步的账号：跳过会话已失效（expired / error）的账号，
+ * 只对 active / unknown 联网刷新或入库——无效账号同步必然失败，没必要发起请求。
+ * （unknown 尚未验证，刷新动作本身即会验证会话，故保留。）
+ */
+export function syncableAccounts(accounts: AccountRecord[]): AccountRecord[] {
+  return accounts.filter(
+    account => account.authState !== 'expired' && account.authState !== 'error',
+  );
+}

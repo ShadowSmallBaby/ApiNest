@@ -45,6 +45,7 @@ export function TitleBar(): React.JSX.Element {
   return (
     <header className="app-titlebar">
       <div className="app-titlebar-brand">
+        <img className="app-titlebar-icon" src="/app-icon.png" alt="" aria-hidden width={18} height={18} />
         <span className="app-titlebar-mark">ApiNest</span>
       </div>
       <div className="app-titlebar-drag" />

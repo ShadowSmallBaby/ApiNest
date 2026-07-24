@@ -13,11 +13,14 @@ describe('resolveLinuxDoOAuthPlan', () => {
   it('uses only the target site confirmed OAuth entry and trusted hosts', () => {
     const plan = resolveLinuxDoOAuthPlan(account);
 
-    expect(plan).toEqual({
+    expect(plan).toMatchObject({
       startUrl: new URL('https://newapi.example.com/sign-in'),
       oauthDomains: ['connect.linux.do'],
       redirectDomains: ['newapi.example.com'],
+      clientId: 'client-id',
+      siteOrigin: 'https://newapi.example.com',
     });
+    expect(plan?.stateUrl.toString()).toBe('https://newapi.example.com/api/oauth/state?aff=');
   });
 
   it('refuses missing client id, another platform, or invalid base url', () => {

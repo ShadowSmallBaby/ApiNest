@@ -34,8 +34,8 @@ describe('logs view filters', () => {
 
   it('keeps only newapi sites', () => {
     const sites: SiteRecord[] = [
-      { id: 's1', name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false },
-      { id: 's2', name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false },
+      { id: 's1', name: 'A', platform: 'newapi', baseUrl: 'x', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
+      { id: 's2', name: 'B', platform: 'sub2api', baseUrl: 'y', routeProfile: 'modern', accountCount: 1, useProxy: false, enabled: true, tags: [] },
     ];
     expect(logCapableSites(sites).map(site => site.id)).toEqual(['s1']);
   });
@@ -46,6 +46,7 @@ describe('logs view display helpers', () => {
     const key: ApiKeyRecord = {
       id: 2, accountId: 'a1', name: 'production', maskedKey: 'sk-…abcd', remainQuota: 0,
       unlimitedQuota: false, usedQuota: 0, status: 1, createdTime: 0, expiredTime: -1,
+      hasPlaintext: false,
     };
     expect(describeKeyOption(key)).toBe('production · sk-…abcd');
   });

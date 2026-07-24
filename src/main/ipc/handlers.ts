@@ -18,6 +18,7 @@ import {
   lockInputSchema,
   openKnownPageInputSchema,
   openLoginInputSchema,
+  importCookiesInputSchema,
   refreshAccountInputSchema,
   removeAccountInputSchema,
   runAllCheckInInputSchema,
@@ -27,6 +28,7 @@ import {
   windowCommandInputSchema,
   authIdentitiesListInputSchema,
   authIdentityIdInputSchema,
+  openAuthIdentityLoginInputSchema,
   createAuthIdentityInputSchema,
   updateAuthIdentityInputSchema,
   saveAuthCredentialInputSchema,
@@ -37,7 +39,9 @@ import {
   sitesListInputSchema,
   updateSiteRequestSchema,
   listKeysByAccountInputSchema,
+  refreshKeysByAccountInputSchema,
   revealKeyInputSchema,
+  captureKeysByAccountInputSchema,
   listModelsInputSchema,
   listLogsByAccountInputSchema,
   runTextApiTestInputSchema,
@@ -61,6 +65,7 @@ import type {
   AccountRecord,
   AccountSnapshot,
   ApiKeyRecord,
+  CaptureKeysResult,
   ModelRecord,
   UsageLogPage,
   UsageLogQuery,
@@ -68,6 +73,8 @@ import type {
   TextApiTestResult,
   AuthIdentity,
   AuthKind,
+  AuthLoginTarget,
+  AuthState,
   AuthStatus,
   KnownPage,
   LoginResult,
@@ -88,7 +95,7 @@ type IpcAccountService = Omit<Pick<
   create(input: import('../../shared/ipc/schemas').CreateAccountInput): AccountRecord;
   update(id: string, input: import('../../shared/ipc/schemas').UpdateAccountInput): AccountRecord;
 };
-type IpcSiteService = Pick<SiteService, 'list' | 'get' | 'create' | 'update' | 'detectPlatform' | 'addAccount' | 'remove'>;
+type IpcSiteService = Pick<SiteService, 'list' | 'get' | 'create' | 'update' | 'detectPlatform' | 'addAccount' | 'remove' | 'getSummaries'>;
 
 type IpcAdapterRegistry = Pick<AdapterRegistry, 'get'>;
 
@@ -99,6 +106,14 @@ type IpcCheckInService = Pick<CheckInService, 'run'>;
 type IpcBatchCheckInOrchestrator = Pick<BatchCheckInOrchestrator, 'run'>;
 type IpcDashboardService = Pick<DashboardService, 'getOverview'>;
 type IpcLoginFlowService = Pick<LoginFlowService, 'open'>;
+
+/** 手动 Cookie 导入端口（主进程写账户 partition）。 */
+export interface CookieImportPort {
+  import(
+    accountId: string,
+    cookieHeader: string,
+  ): Promise<{ imported: number; authState: AuthState; message: string }>;
+}
 
 /** 窗口控制端口：仅固定枚举动作，不接受任意句柄/坐标/尺寸。 */
 export interface WindowControlPort {
@@ -154,7 +169,7 @@ export interface AuthIdentitiesPort {
   remove(authId: string): void;
   saveCredential(authId: string, input: { username: string; password: string }): void;
   hasCredential(authId: string): boolean;
-  openLogin(authId: string): LoginResult | Promise<LoginResult>;
+  openLogin(authId: string, target?: AuthLoginTarget): LoginResult | Promise<LoginResult>;
 }
 
 /**
@@ -164,7 +179,9 @@ export interface AuthIdentitiesPort {
  */
 export interface KeysPort {
   listByAccount(accountId: string): Promise<ApiKeyRecord[]>;
+  refresh(accountId: string): Promise<ApiKeyRecord[]>;
   reveal(accountId: string, tokenId: number): Promise<string>;
+  captureAll(accountId: string): Promise<CaptureKeysResult>;
 }
 
 /**
@@ -202,6 +219,7 @@ export interface IpcHandlerDependencies {
   batchCheckInOrchestrator?: IpcBatchCheckInOrchestrator;
   dashboardService?: IpcDashboardService;
   loginFlowService?: IpcLoginFlowService;
+  cookieImport?: CookieImportPort;
   authIdentities?: AuthIdentitiesPort;
   keys?: KeysPort;
   models?: ModelsPort;
@@ -311,7 +329,9 @@ function createInMemoryServices(): { accountService: IpcAccountService; siteServ
         id: newId(), name: input.name, platform: input.platform, baseUrl: input.baseUrl,
         note: input.note, linuxDoClientId: input.linuxDoClientId,
         routeProfile: input.platform === 'newapi' ? input.routeProfile : 'modern',
-        useProxy: input.useProxy ?? false, accountCount: 0,
+        useProxy: input.useProxy ?? false,
+        enabled: input.enabled ?? true, tags: input.tags ?? [],
+        accountCount: 0,
       };
       sites.set(site.id, site);
       const account = accountService.create({ siteId: site.id, ...input.firstAccount });
@@ -338,6 +358,13 @@ function createInMemoryServices(): { accountService: IpcAccountService; siteServ
       for (const [accountId, account] of accounts) if (account.siteId === id) accounts.delete(accountId);
       sites.delete(id);
     },
+    // 无 DB 模式无快照/签到数据：余额合计一律 null（红线不伪造 0），今日签到数 0。
+    getSummaries: () =>
+      Array.from(sites.values()).map(site => ({
+        siteId: site.id,
+        balanceTotal: null,
+        checkedInToday: 0,
+      })),
   };
 
   return { accountService, siteService };
@@ -398,6 +425,7 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
   const batchCheckInOrchestrator = dependencies.batchCheckInOrchestrator;
   const dashboardService = dependencies.dashboardService;
   const loginFlowService = dependencies.loginFlowService;
+  const cookieImport = dependencies.cookieImport;
   const authIdentities = dependencies.authIdentities;
   const inAppPageOpener = dependencies.inAppPageOpener;
   const embeddedPage = dependencies.embeddedPage;
@@ -523,6 +551,20 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
         }
         return batchCheckInOrchestrator.run(eligibleIds);
       }),
+    [IPC_CHANNELS.sites.getSummaries]: (payload?: unknown) =>
+      safeHandle(() => {
+        assertUnlockedForSensitiveOperation(lockService);
+        sitesListInputSchema.parse(payload ?? {});
+        return siteService.getSummaries();
+      }),
+    [IPC_CHANNELS.sites.openWebsite]: (payload: unknown) =>
+      safeHandle(async () => {
+        assertUnlockedForSensitiveOperation(lockService);
+        const parsed = siteIdInputSchema.parse(payload);
+        // 站点 baseUrl 已在落库前经 normalizeBaseUrl 规范化并限 http/https，可安全外开。
+        const site = siteService.get(parsed.siteId);
+        await shell.openExternal(site.baseUrl);
+      }),
     [IPC_CHANNELS.accounts.list]: () => safeHandle(() => accountService.list()),
     [IPC_CHANNELS.accounts.create]: (payload: unknown) =>
       safeHandle(() => {
@@ -617,7 +659,16 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
         if (!loginFlowService) {
           throw new AppError('NOT_IMPLEMENTED', 'Login flow is not available.');
         }
-        return loginFlowService.open(parsed.accountId, parsed.mode);
+        return loginFlowService.open(parsed.accountId, parsed.mode ?? 'auto');
+      }),
+    [IPC_CHANNELS.auth.importCookies]: (payload: unknown) =>
+      safeHandle(async () => {
+        assertUnlockedForSensitiveOperation(lockService);
+        const parsed = importCookiesInputSchema.parse(payload);
+        if (!cookieImport) {
+          throw new AppError('NOT_IMPLEMENTED', 'Cookie import is not available.');
+        }
+        return cookieImport.import(parsed.accountId, parsed.cookieHeader);
       }),
     [IPC_CHANNELS.auth.clearSession]: (payload: unknown) =>
       safeHandle(async () => {
@@ -686,11 +737,11 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
     [IPC_CHANNELS.authIdentities.openLogin]: (payload: unknown) =>
       safeHandle(() => {
         assertUnlockedForSensitiveOperation(lockService);
-        const parsed = authIdentityIdInputSchema.parse(payload);
+        const parsed = openAuthIdentityLoginInputSchema.parse(payload);
         if (!authIdentities) {
           throw new AppError('NOT_IMPLEMENTED', 'Auth identities are not available.');
         }
-        return authIdentities.openLogin(parsed.authId);
+        return authIdentities.openLogin(parsed.authId, parsed.target);
       }),
     [IPC_CHANNELS.accounts.linkAuth]: (payload: unknown) =>
       safeHandle(() => {
@@ -753,6 +804,33 @@ export function buildIpcHandlers(dependencies: IpcHandlerDependencies = {}) {
           throw new AppError('ACCOUNT_NOT_FOUND', 'Account was not found.');
         }
         return keys.reveal(parsed.accountId, parsed.tokenId);
+      }),
+    [IPC_CHANNELS.keys.refresh]: (payload: unknown) =>
+      safeHandle(async () => {
+        assertUnlockedForSensitiveOperation(lockService);
+        const parsed = refreshKeysByAccountInputSchema.parse(payload);
+        if (!keys) {
+          throw new AppError('NOT_IMPLEMENTED', 'Key management is not available.');
+        }
+        const account = accountService.list().find(item => item.id === parsed.accountId);
+        if (!account) {
+          throw new AppError('ACCOUNT_NOT_FOUND', 'Account was not found.');
+        }
+        return keys.refresh(parsed.accountId);
+      }),
+    [IPC_CHANNELS.keys.captureAll]: (payload: unknown) =>
+      safeHandle(async () => {
+        assertUnlockedForSensitiveOperation(lockService);
+        // 批量获取明文并加密入库；仅返回计数，绝不回传任何明文本身。
+        const parsed = captureKeysByAccountInputSchema.parse(payload);
+        if (!keys) {
+          throw new AppError('NOT_IMPLEMENTED', 'Key management is not available.');
+        }
+        const account = accountService.list().find(item => item.id === parsed.accountId);
+        if (!account) {
+          throw new AppError('ACCOUNT_NOT_FOUND', 'Account was not found.');
+        }
+        return keys.captureAll(parsed.accountId);
       }),
     [IPC_CHANNELS.models.listByAccount]: (payload: unknown) =>
       safeHandle(async () => {

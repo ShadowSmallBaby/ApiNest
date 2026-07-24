@@ -16,8 +16,9 @@ export interface NavItem {
 }
 
 /**
- * 左侧导航项。全部显示，未实现能力进入占位页而非隐藏，
+ * 左侧主导航项。全部显示，未实现能力进入占位页而非隐藏，
  * 使信息架构完整但不伪造尚不可用的功能。
+ * 系统设置不在主导航中——由侧栏底部的齿轮图标触发（NavKey 仍保留 'settings'）。
  */
 export const NAV_ITEMS: NavItem[] = [
   { key: 'dashboard', label: '仪表盘', implemented: true },
@@ -27,5 +28,4 @@ export const NAV_ITEMS: NavItem[] = [
   { key: 'logs', label: '日志', implemented: true },
   { key: 'test', label: '测试', implemented: true },
   { key: 'oauth', label: 'OAuth', implemented: true },
-  { key: 'settings', label: '系统设置', implemented: true },
 ];

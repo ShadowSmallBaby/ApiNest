@@ -13,6 +13,8 @@ export interface SessionResponse {
   bodyText: string;
   /** 达到读取上限时为 true；旧替身可省略，等价于 false。 */
   truncated?: boolean;
+  /** 跟随重定向后的最终 URL（若运行时提供）；不含敏感时由调用方决定是否记录 host/path。 */
+  finalUrl?: string;
 }
 
 export interface SessionRequestOptions {

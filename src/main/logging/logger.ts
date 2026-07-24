@@ -46,7 +46,13 @@ function serializeArgs(args: unknown[]): unknown[] {
 
 log.initialize();
 log.transports.file.level = 'info';
-log.transports.console.level = false;
+// 开发时把过程日志打到启动 Electron 的终端；生产仍写文件，控制台保持 info 便于排障。
+// 敏感字段仍经 redactSensitiveData，禁止输出 cookie/code/token。
+log.transports.console.level = process.env.NODE_ENV === 'production' ? 'warn' : 'info';
+// 终端里一行一条，避免 electron-log 默认样式噪声。
+if (log.transports.console) {
+  log.transports.console.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}';
+}
 
 export const appLogger = {
   info(message: string, ...args: unknown[]): void {

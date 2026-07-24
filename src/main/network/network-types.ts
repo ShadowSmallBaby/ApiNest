@@ -2,9 +2,12 @@
  * 阶段 6 网络领域类型：Secure DNS 与 Proxy 的冻结配置模型。
  *
  * 这些类型是全应用网络策略的唯一真源，刻意与 Electron 运行时类型解耦：
- * - Secure DNS 为应用级（app.configureHostResolver），全局、重启生效；
+ * - Secure DNS 为应用级（app.configureHostResolver），保存后热应用（与 Chrome 类似，无需重启）；
  * - Proxy 为 partition 级模板（Session.setProxy），逐资源 opt-in。
  * 领域层只描述「允许的安全子集」，绝不表达 PAC / WPAD / 认证代理 / 任意 bypass。
+ *
+ * SecureDnsConfig.servers 在 off/automatic 下也可非空：仅作「已填配置保留」，
+ * 实际 Host Resolver 仅在 mode=secure 时注入 servers。
  */
 
 /** 全局 Secure DNS 模式：关闭 / 系统自动（含明文回退）/ 强制 DoH。 */

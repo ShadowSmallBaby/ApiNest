@@ -5,6 +5,8 @@ import { authIdentitiesMigration } from './004-auth-identities';
 import { sitesMigration } from './005-sites';
 import { networkSettingsMigration } from './006-network-settings';
 import { newApiUserIdentityMigration } from './007-newapi-user-identity';
+import { siteEnabledTagsMigration } from './008-site-enabled-tags';
+import { accountKeysMigration } from './009-account-keys';
 
 export const migrations = [
   initialSchemaMigration,
@@ -14,4 +16,6 @@ export const migrations = [
   sitesMigration,
   networkSettingsMigration,
   newApiUserIdentityMigration,
+  siteEnabledTagsMigration,
+  accountKeysMigration,
 ];

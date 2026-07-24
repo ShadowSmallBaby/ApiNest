@@ -90,6 +90,19 @@ export function SiteForm(props: SiteFormProps): React.JSX.Element {
         使用全局 Proxy（在系统设置中配置；关闭则该站点账户直连）
       </label>
 
+      <label className="proxy-toggle">
+        <input
+          type="checkbox"
+          checked={values.enabled}
+          disabled={busy}
+          onChange={e => set('enabled', e.target.checked)}
+        />
+        启用该站点（关闭后默认从站点广场「仅启用」视图中隐藏）
+      </label>
+
+      <label>站点标签（可选，回车添加，至多 12 个）</label>
+      <TagInput tags={values.tags} disabled={busy} onChange={next => set('tags', next)} />
+
       {values.platform === 'newapi' ? (
         <>
           <label>LinuxDo Client ID（可选）<input value={values.linuxDoClientId} disabled={busy} onChange={e => set('linuxDoClientId', e.target.value)} /></label>
@@ -124,5 +137,63 @@ export function SiteForm(props: SiteFormProps): React.JSX.Element {
         <button type="submit" disabled={busy}>{props.submitLabel}</button>
       </div>
     </form>
+  );
+}
+
+interface TagInputProps {
+  tags: string[];
+  disabled: boolean;
+  onChange: (tags: string[]) => void;
+}
+
+/**
+ * 标签胶囊输入（纯前端小组件，无第三方依赖）。回车/逗号提交新标签，
+ * 点击胶囊上的 × 删除。单标签去空白后 1–24 字符、去重、至多 12 个，
+ * 与后端 schema/清洗上限一致；超限或重复静默忽略，不打断输入流。
+ */
+function TagInput({ tags, disabled, onChange }: TagInputProps): React.JSX.Element {
+  const [draft, setDraft] = useState('');
+
+  const commit = (): void => {
+    const tag = draft.trim();
+    if (tag.length === 0 || tag.length > 24 || tags.includes(tag) || tags.length >= 12) {
+      setDraft('');
+      return;
+    }
+    onChange([...tags, tag]);
+    setDraft('');
+  };
+
+  const remove = (target: string): void => {
+    onChange(tags.filter(tag => tag !== target));
+  };
+
+  return (
+    <div className="site-tag-input">
+      {tags.length > 0 ? (
+        <div className="site-tag-input-chips">
+          {tags.map(tag => (
+            <span key={tag} className="site-tag-chip">
+              {tag}
+              <button type="button" className="site-tag-remove" disabled={disabled} aria-label={`删除标签 ${tag}`} onClick={() => remove(tag)}>×</button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <input
+        value={draft}
+        disabled={disabled || tags.length >= 12}
+        placeholder={tags.length >= 12 ? '已达标签上限' : '输入标签后回车添加'}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            commit();
+          } else if (e.key === 'Backspace' && draft.length === 0 && tags.length > 0) {
+            remove(tags[tags.length - 1]);
+          }
+        }}
+      />
+    </div>
   );
 }

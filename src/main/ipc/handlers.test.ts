@@ -104,6 +104,7 @@ describe('buildIpcHandlers', () => {
         },
         addAccount: () => { throw new Error('Unexpected account creation.'); },
         remove: async () => { throw new Error('Unexpected site removal.'); },
+        getSummaries: () => { throw new Error('Unexpected site summaries.'); },
       },
     });
     await handlers['auth:unlock']({ masterPassword: 'correct horse battery staple' });
@@ -218,11 +219,11 @@ describe('buildIpcHandlers', () => {
   it('delegates manual and LinuxDo login only while unlocked', async () => {
     const accountId = '11111111-1111-4111-8111-111111111111';
     const lockService = createTestLockService();
-    const calls: Array<{ accountId: string; mode: 'manual' | 'linuxdo' }> = [];
+    const calls: Array<{ accountId: string; mode: string }> = [];
     const handlers = buildIpcHandlers({
       lockService,
       loginFlowService: {
-        open: async (id, mode) => {
+        open: async (id, mode = 'auto') => {
           calls.push({ accountId: id, mode });
           return {
             accountId: id,

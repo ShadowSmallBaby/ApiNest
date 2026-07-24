@@ -1,11 +1,12 @@
+import { useState } from 'react';
 import type {
   AccountPageCapabilities,
   AccountRecord,
   AccountSnapshot,
   AuthIdentity,
+  AuthState,
   CheckInResult,
   KnownPage,
-  LoginMode,
 } from '../../../../shared/ipc/bridge';
 import { authIdentityLabel } from './account-form';
 import { buildAccountSnapshotView, type SnapshotDisplayItem } from './account-snapshot-view';
@@ -17,17 +18,20 @@ export interface AccountDetailProps {
   pageCapabilities: AccountPageCapabilities | null;
   refreshError: string | null;
   checkInResult: CheckInResult | null;
+  loginMessage: string | null;
   onEdit: () => void;
   onCopy: () => void;
   onDelete: () => void;
   onRefresh: () => void;
-  onOpenLogin: (mode: LoginMode) => void;
+  /** 统一登录：默认 auto（先自动后手动窗口）。 */
+  onOpenLogin: () => void;
   onCheckIn: () => void;
   onOpenInApp: (page: KnownPage) => void;
   onOpenExternal: (page: KnownPage) => void;
   onClearSession: () => void;
   authIdentities: AuthIdentity[];
   onLinkAuth: (authId: string | null) => void;
+  onImportCookies: (cookieHeader: string) => Promise<void>;
 }
 
 const AUTH_STATE_LABELS: Record<AccountRecord['authState'], string> = {
@@ -72,21 +76,41 @@ function SnapshotCard({ label, item }: { label: string; item: SnapshotDisplayIte
 }
 
 /**
- * 账号详情：展示账号身份、缓存快照（资料/余额/用量）与账号级操作。
- *
- * 纯展示 + 回调组件——副作用由上层（SitesPage）在 run() 编排中执行，
- * 删除/清会话等确认由上层侧边栏确认承载，本组件只发起意图。
+ * 账号详情：展示账号身份、缓存快照与账号级操作。
+ * 登录为统一入口（自动优先）；支持手动粘贴站点 Cookie。
  */
 export function AccountDetail(props: AccountDetailProps): React.JSX.Element {
   const {
-    account, isBusy, snapshots, pageCapabilities, refreshError, checkInResult,
+    account, isBusy, snapshots, pageCapabilities, refreshError, checkInResult, loginMessage,
     onEdit, onCopy, onDelete, onRefresh, onOpenLogin, onCheckIn,
-    onOpenInApp, onOpenExternal, onClearSession, authIdentities, onLinkAuth,
+    onOpenInApp, onOpenExternal, onClearSession, authIdentities, onLinkAuth, onImportCookies,
   } = props;
+
+  const [cookieDraft, setCookieDraft] = useState('');
+  const [cookiePending, setCookiePending] = useState(false);
+  const [cookieMessage, setCookieMessage] = useState<string | null>(null);
+  const [showCookieImport, setShowCookieImport] = useState(false);
 
   const view = buildAccountSnapshotView(snapshots);
   const caps = pageCapabilities;
   const pages = caps ? (Object.keys(caps.pages) as KnownPage[]) : [];
+
+  const handleImportCookies = async (): Promise<void> => {
+    if (cookieDraft.trim().length === 0) {
+      return;
+    }
+    setCookiePending(true);
+    setCookieMessage(null);
+    try {
+      await onImportCookies(cookieDraft.trim());
+      setCookieDraft('');
+      setCookieMessage('Cookie 已写入本账户会话（值不会回显）。');
+    } catch (error) {
+      setCookieMessage(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      setCookiePending(false);
+    }
+  };
 
   return (
     <section className="account-detail">
@@ -121,24 +145,54 @@ export function AccountDetail(props: AccountDetailProps): React.JSX.Element {
           {CHECKIN_LABELS[checkInResult.result]}
         </p>
       ) : null}
+      {loginMessage ? <p className="hint">{loginMessage}</p> : null}
 
       <div className="detail-actions">
         <button type="button" onClick={onRefresh} disabled={isBusy}>刷新数据</button>
         {caps?.checkIn ? (
           <button type="button" className="secondary-button" onClick={onCheckIn} disabled={isBusy}>签到</button>
         ) : null}
-        <button type="button" className="secondary-button" onClick={() => onOpenLogin('manual')} disabled={isBusy}>
-          应用内登录
+        <button type="button" className="secondary-button" onClick={onOpenLogin} disabled={isBusy}>
+          {isBusy ? '登录中…' : '登录'}
         </button>
-        {caps?.linuxDoOAuth ? (
-          <button type="button" className="secondary-button" onClick={() => onOpenLogin('linuxdo')} disabled={isBusy}>
-            LinuxDo 登录
-          </button>
-        ) : null}
         <button type="button" className="subtle-button" onClick={onClearSession} disabled={isBusy}>
           清除会话
         </button>
+        <button
+          type="button"
+          className="subtle-button"
+          onClick={() => setShowCookieImport(open => !open)}
+          disabled={isBusy}
+        >
+          {showCookieImport ? '收起 Cookie' : '手动配置 Cookie'}
+        </button>
       </div>
+
+      {showCookieImport ? (
+        <div className="settings-field" style={{ marginTop: '0.75rem' }}>
+          <label htmlFor={`cookie-import-${account.id}`}>站点 Cookie</label>
+          <textarea
+            id={`cookie-import-${account.id}`}
+            rows={3}
+            value={cookieDraft}
+            placeholder="session=xxx; 其它键=值（仅写入本账户会话，不会回显）"
+            disabled={isBusy || cookiePending}
+            onChange={event => setCookieDraft(event.target.value)}
+          />
+          <p className="hint">
+            粘贴浏览器里该站点的 Cookie（name=value; …）。仅导入到本账户隔离会话；请勿粘贴无关站点 Cookie。
+          </p>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isBusy || cookiePending || cookieDraft.trim().length === 0}
+            onClick={() => void handleImportCookies()}
+          >
+            {cookiePending ? '导入中…' : '写入会话'}
+          </button>
+          {cookieMessage ? <p className="hint">{cookieMessage}</p> : null}
+        </div>
+      ) : null}
 
       {pages.length > 0 ? (
         <div className="future-capabilities">
@@ -176,4 +230,9 @@ export function AccountDetail(props: AccountDetailProps): React.JSX.Element {
       </div>
     </section>
   );
+}
+
+/** 供上层把 AuthState 映射为中文时复用（避免重复文案）。 */
+export function authStateLabel(state: AuthState): string {
+  return AUTH_STATE_LABELS[state];
 }
