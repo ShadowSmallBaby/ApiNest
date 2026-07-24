@@ -54,12 +54,13 @@ export interface SiteRecord {
 
 /**
  * 站点广场聚合摘要（一次性后端聚合，避免前端逐账户拉取）。
- * balanceTotal：该站点各账户最新 balance 快照 remaining 之和；
+ * balanceTotal：该站点各账户最新 balance 快照换算后的 USD 合计；
  * 全部账户无余额快照时为 null（红线：缺失/解析失败不伪造 0）。
  * checkedInToday：今日已签到的去重账号数（分子），分母用 accountCount。
  */
 export interface SiteSummary {
   siteId: string;
+  /** 站点余额 USD 合计；无有效快照时为 null。 */
   balanceTotal: number | null;
   checkedInToday: number;
 }

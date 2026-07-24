@@ -65,9 +65,10 @@ describe('site-card-view', () => {
     expect(overallStatusLabel('unknown')).toBe('未知');
   });
 
-  it('never renders a fabricated zero balance (red line)', () => {
+  it('formats USD balance totals with two decimals (red line: null not zero)', () => {
     expect(balanceTotalLabel(null)).toBe('暂无余额');
-    expect(balanceTotalLabel(0)).toBe('余额合计 0');
-    expect(balanceTotalLabel(1234)).toBe('余额合计 1,234');
+    expect(balanceTotalLabel(0)).toBe('余额合计 $0.00');
+    expect(balanceTotalLabel(2)).toBe('余额合计 $2.00');
+    expect(balanceTotalLabel(128.483746)).toBe('余额合计 $128.48');
   });
 });

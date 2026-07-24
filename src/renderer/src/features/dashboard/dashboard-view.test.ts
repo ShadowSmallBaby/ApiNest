@@ -9,8 +9,8 @@ const overview: DashboardOverview = {
         id: 'a', platform: 'newapi', baseUrl: 'https://a.example.com', displayName: 'Alpha', authState: 'active',
       },
       snapshots: [
-        { kind: 'balance', payloadJson: '{"remaining":10}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
-        { kind: 'usage', payloadJson: '{"used":3}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+        { kind: 'balance', payloadJson: '{"remaining":1000000,"quotaPerUnit":500000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+        { kind: 'usage', payloadJson: '{"used":150000,"quotaPerUnit":500000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
       ],
       operations: [],
     },
@@ -19,8 +19,8 @@ const overview: DashboardOverview = {
         id: 'b', platform: 'newapi', baseUrl: 'https://b.example.com', displayName: 'Beta', authState: 'expired',
       },
       snapshots: [
-        { kind: 'balance', payloadJson: '{"remaining":20}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
-        { kind: 'usage', payloadJson: '{"used":7}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+        { kind: 'balance', payloadJson: '{"remaining":500000,"quotaPerUnit":500000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+        { kind: 'usage', payloadJson: '{"used":100000,"quotaPerUnit":500000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
       ],
       operations: [],
     },
@@ -35,23 +35,64 @@ describe('dashboard view', () => {
     })).toEqual([overview.accounts[0]]);
   });
 
-  it('aggregates only snapshots with a matching explicit unit', () => {
-    expect(aggregateSnapshot(overview.accounts, 'balance')).toEqual({ value: 30, unit: 'quota' });
-    expect(aggregateSnapshot(overview.accounts, 'usage')).toEqual({ value: 10, unit: 'quota' });
+  it('aggregates and converts quota to USD', () => {
+    // Alpha: 1000000/500000 = 2, Beta: 500000/500000 = 1 → total 3
+    expect(aggregateSnapshot(overview.accounts, 'balance')).toEqual({ value: 3, unit: 'USD' });
+    // Alpha: 150000/500000 = 0.3, Beta: 100000/500000 = 0.2 → total 0.5
+    expect(aggregateSnapshot(overview.accounts, 'usage')).toEqual({ value: 0.5, unit: 'USD' });
   });
 
-  it('never aggregates missing, invalid, or incompatible unit data', () => {
-    const incompatible: DashboardOverview = {
+  it('uses fallback quotaPerUnit=500000 when missing or zero', () => {
+    const noQuotaPerUnit: DashboardOverview = {
       accounts: [
-        overview.accounts[0],
         {
-          ...overview.accounts[1],
-          snapshots: [{ kind: 'balance', payloadJson: '{"remaining":20}', semanticUnit: 'credits', fetchedAt: '2026-01-01T00:00:00.000Z' }],
+          account: overview.accounts[0].account,
+          snapshots: [
+            { kind: 'balance', payloadJson: '{"remaining":1000000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+          ],
+          operations: [],
+        },
+        {
+          account: overview.accounts[1].account,
+          snapshots: [
+            { kind: 'balance', payloadJson: '{"remaining":500000,"quotaPerUnit":0}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+          ],
+          operations: [],
         },
       ],
     };
-    expect(aggregateSnapshot(incompatible.accounts, 'balance')).toBeNull();
+    // Both fallback to 500000: (1000000 + 500000) / 500000 = 3
+    expect(aggregateSnapshot(noQuotaPerUnit.accounts, 'balance')).toEqual({ value: 3, unit: 'USD' });
+  });
+
+  it('returns null when any account has missing or invalid snapshot', () => {
     expect(aggregateSnapshot([{ ...overview.accounts[0], snapshots: [] }], 'balance')).toBeNull();
-    expect(aggregateSnapshot([{ ...overview.accounts[0], snapshots: [{ kind: 'balance', payloadJson: 'bad-json', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' }] }], 'balance')).toBeNull();
+    expect(aggregateSnapshot([{
+      ...overview.accounts[0],
+      snapshots: [{ kind: 'balance', payloadJson: 'bad-json', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' }],
+    }], 'balance')).toBeNull();
+  });
+
+  it('handles mixed quotaPerUnit across accounts correctly', () => {
+    const mixed: DashboardOverview = {
+      accounts: [
+        {
+          account: { id: 'a', platform: 'newapi', baseUrl: 'https://a.com', displayName: 'A', authState: 'active' },
+          snapshots: [
+            { kind: 'balance', payloadJson: '{"remaining":1000000,"quotaPerUnit":500000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+          ],
+          operations: [],
+        },
+        {
+          account: { id: 'b', platform: 'newapi', baseUrl: 'https://b.com', displayName: 'B', authState: 'active' },
+          snapshots: [
+            { kind: 'balance', payloadJson: '{"remaining":2000000,"quotaPerUnit":1000000}', semanticUnit: 'quota', fetchedAt: '2026-01-01T00:00:00.000Z' },
+          ],
+          operations: [],
+        },
+      ],
+    };
+    // A: 1000000/500000 = 2, B: 2000000/1000000 = 2 → total 4
+    expect(aggregateSnapshot(mixed.accounts, 'balance')).toEqual({ value: 4, unit: 'USD' });
   });
 });

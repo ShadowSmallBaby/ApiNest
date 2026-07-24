@@ -73,8 +73,11 @@ export function routeProfileLabel(site: SiteRecord): string {
   return '历史 Panel 路由';
 }
 
-/** 余额合计展示文案；null 时为「暂无余额」，绝不显示 0（红线）。 */
+/**
+ * 余额合计展示文案；null 时为「暂无余额」，绝不显示伪造 0（红线）。
+ * balanceTotal 已由主进程换算为 USD 合计，此处仅格式化为两位小数。
+ */
 export function balanceTotalLabel(balanceTotal: number | null): string {
   if (balanceTotal === null) return '暂无余额';
-  return `余额合计 ${balanceTotal.toLocaleString('zh-CN')}`;
+  return `余额合计 $${balanceTotal.toFixed(2)}`;
 }

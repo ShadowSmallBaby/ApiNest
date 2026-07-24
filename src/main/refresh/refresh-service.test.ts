@@ -11,15 +11,18 @@ import type {
   NewApiQueriesClient,
   NewApiQueryResult,
 } from '../adapters/newapi/newapi-queries-client';
+import type { NewApiStatusClient } from '../adapters/newapi/newapi-status-client';
 import { RefreshService } from './refresh-service';
 
 type QueriesClientPort = Pick<NewApiQueriesClient, 'query'>;
+type StatusClientPort = Pick<NewApiStatusClient, 'fetchStatus'>;
 
 const ACCOUNT_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('RefreshService', () => {
   function createHarness(
     queriesClient: QueriesClientPort,
+    statusClient: StatusClientPort = { fetchStatus: async () => ({ quotaPerUnit: 500000 }) },
     siteUserId: string | null = '42',
   ): {
     service: RefreshService;
@@ -55,6 +58,7 @@ describe('RefreshService', () => {
     return {
       service: new RefreshService({
         queriesClient,
+        statusClient,
         snapshotRepository,
         operationRepository,
         accountRepository,
@@ -85,9 +89,42 @@ describe('RefreshService', () => {
       const snapshots = snapshotRepository.getLatest(ACCOUNT_ID);
       expect(snapshots.map(s => s.kind).sort()).toEqual(['balance', 'profile', 'usage']);
 
+      const balance = snapshots.find(s => s.kind === 'balance');
+      const usage = snapshots.find(s => s.kind === 'usage');
+      expect(JSON.parse(balance!.payloadJson)).toMatchObject({
+        remaining: 500,
+        unit: 'quota',
+        quotaPerUnit: 500000,
+      });
+      expect(JSON.parse(usage!.payloadJson)).toMatchObject({
+        used: 120,
+        unit: 'quota',
+        quotaPerUnit: 500000,
+      });
+
       const operations = operationRepository.listRecent(ACCOUNT_ID);
       expect(operations).toHaveLength(1);
       expect(operations[0].status).toBe('success');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('injects custom quotaPerUnit from status client into snapshots', async () => {
+    const result: NewApiQueryResult = {
+      profile: null,
+      balance: { remaining: 64241873, unit: 'quota', source: 'newapi:/api/user/self' },
+      usage: { used: 123456, unit: 'quota', source: 'newapi:/api/user/self' },
+    };
+    const { service, snapshotRepository, cleanup } = createHarness(
+      { query: async () => result },
+      { fetchStatus: async () => ({ quotaPerUnit: 500000 }) },
+    );
+
+    try {
+      await service.refresh(ACCOUNT_ID);
+      const balance = snapshotRepository.getLatest(ACCOUNT_ID).find(s => s.kind === 'balance');
+      expect(JSON.parse(balance!.payloadJson).quotaPerUnit).toBe(500000);
     } finally {
       cleanup();
     }
@@ -185,7 +222,8 @@ describe('RefreshService', () => {
           return { profile: null, balance: null, usage: null };
         },
       },
-      null,
+      undefined, // 使用默认 statusClient
+      null, // 无 siteUserId
     );
 
     try {

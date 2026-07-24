@@ -92,7 +92,7 @@ export class SiteService {
 
   /**
    * 站点广场聚合：为每个站点计算余额合计与今日已签到去重账号数。
-   * balanceTotal：该站点账户最新 balance 快照 remaining 之和；全无有效快照时为 null
+   * balanceTotal：该站点账户最新 balance 快照换算后的 USD 合计；全无有效快照时为 null
    * （红线：无快照不伪造 0，UI 显示「暂无余额」）。
    * checkedInToday：今日 result ∈ {success, already_checked_in} 的去重账号数（分子）。
    * 未注入聚合 repository 时（如内存模式）返回全 null/0，不抛错。

@@ -5,6 +5,9 @@ import type {
   PlatformType,
 } from '../../../../shared/ipc/bridge';
 
+/** NewAPI 标准默认汇率除数（quota → USD），与 account-snapshot-view 保持一致。 */
+const DEFAULT_QUOTA_PER_UNIT = 500000;
+
 export interface DashboardFilters {
   platform: PlatformType | 'all';
   query: string;
@@ -36,6 +39,19 @@ function parseFiniteNumber(payloadJson: string, field: 'remaining' | 'used'): nu
   }
 }
 
+function parseQuotaPerUnit(payloadJson: string): number {
+  try {
+    const value = JSON.parse(payloadJson) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return DEFAULT_QUOTA_PER_UNIT;
+    }
+    const candidate = (value as Record<string, unknown>).quotaPerUnit;
+    return typeof candidate === 'number' && candidate > 0 ? candidate : DEFAULT_QUOTA_PER_UNIT;
+  } catch {
+    return DEFAULT_QUOTA_PER_UNIT;
+  }
+}
+
 export function filterDashboardAccounts(
   accounts: DashboardAccount[],
   filters: DashboardFilters,
@@ -59,7 +75,8 @@ export function buildDashboardStats(overview: DashboardOverview): DashboardStats
 }
 
 /**
- * 仅当每个账户都有同一明确单位的有限值时聚合；缺项、单位不同或无效值均返回 null。
+ * 仅当每个账户都有有限值时聚合并换算为 USD；缺项或无效值返回 null。
+ * 余额保留两位小数，用量保留四位小数。
  */
 export function aggregateSnapshot(
   accounts: DashboardAccount[],
@@ -72,25 +89,24 @@ export function aggregateSnapshot(
   const field = kind === 'balance' ? 'remaining' : 'used';
   const values = accounts.map(({ snapshots }) => {
     const snapshot = snapshots.find(item => item.kind === kind);
-    if (!snapshot?.semanticUnit) {
+    if (!snapshot) {
       return null;
     }
-    const value = parseFiniteNumber(snapshot.payloadJson, field);
-    return value === null ? null : { unit: snapshot.semanticUnit, value };
+    const quotaValue = parseFiniteNumber(snapshot.payloadJson, field);
+    if (quotaValue === null) {
+      return null;
+    }
+    const quotaPerUnit = parseQuotaPerUnit(snapshot.payloadJson);
+    return quotaValue / quotaPerUnit; // 换算为 USD
   });
 
   if (values.some(value => value === null)) {
     return null;
   }
 
-  const validValues = values as Array<{ unit: string; value: number }>;
-  const unit = validValues[0].unit;
-  if (!validValues.every(value => value.unit === unit)) {
-    return null;
-  }
-
+  const validValues = values as number[];
   return {
-    value: validValues.reduce((total, item) => total + item.value, 0),
-    unit,
+    value: validValues.reduce((total, usd) => total + usd, 0),
+    unit: 'USD',
   };
 }

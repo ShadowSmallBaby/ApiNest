@@ -12,12 +12,25 @@ export interface SnapshotEntity {
   isLatest: boolean;
 }
 
-/** 健壮解析 balance 快照 payload 的 remaining；非有限数一律 null，绝不抛出。 */
-function parseBalanceRemaining(payloadJson: string): number | null {
+/** NewAPI 标准默认汇率除数（quota → USD）；旧快照缺字段时使用。 */
+const DEFAULT_QUOTA_PER_UNIT = 500000;
+
+/**
+ * 健壮解析 balance 快照并换算为 USD。
+ * remaining 非有限数时返回 null；quotaPerUnit 缺失/非正数时 fallback 到 500000。
+ */
+function parseBalanceUsd(payloadJson: string): number | null {
   try {
-    const parsed = JSON.parse(payloadJson) as { remaining?: unknown };
+    const parsed = JSON.parse(payloadJson) as { remaining?: unknown; quotaPerUnit?: unknown };
     const remaining = parsed?.remaining;
-    return typeof remaining === 'number' && Number.isFinite(remaining) ? remaining : null;
+    if (typeof remaining !== 'number' || !Number.isFinite(remaining)) {
+      return null;
+    }
+    const quotaPerUnit =
+      typeof parsed?.quotaPerUnit === 'number' && parsed.quotaPerUnit > 0
+        ? parsed.quotaPerUnit
+        : DEFAULT_QUOTA_PER_UNIT;
+    return remaining / quotaPerUnit;
   } catch {
     return null;
   }
@@ -96,9 +109,10 @@ export class SnapshotRepository {
   }
 
   /**
-   * 按站点聚合最新 balance 快照的 remaining 之和。join accounts 取 site_id，
-   * 只统计 is_latest=1 的 balance 快照，payload 在 JS 侧健壮解析求和。
-   * 返回 Map<siteId, { total, count }>：count 为该站点有有效余额的账户数；
+   * 按站点聚合最新 balance 快照的 USD 合计。
+   * join accounts 取 site_id，只统计 is_latest=1 的 balance 快照；
+   * 每条 payload 在 JS 侧换算 remaining / quotaPerUnit 后再求和。
+   * 返回 Map<siteId, { total, count }>：total 为 USD；count 为有效余额账户数；
    * count=0 的站点不会出现在 Map 中（红线：无快照不伪造 0，由调用方判定 null）。
    */
   sumBalanceBySite(): Map<string, { total: number; count: number }> {
@@ -113,10 +127,10 @@ export class SnapshotRepository {
 
     const result = new Map<string, { total: number; count: number }>();
     for (const row of rows) {
-      const remaining = parseBalanceRemaining(row.payloadJson);
-      if (remaining === null) continue;
+      const usd = parseBalanceUsd(row.payloadJson);
+      if (usd === null) continue;
       const current = result.get(row.siteId) ?? { total: 0, count: 0 };
-      current.total += remaining;
+      current.total += usd;
       current.count += 1;
       result.set(row.siteId, current);
     }

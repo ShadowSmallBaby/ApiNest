@@ -13,17 +13,20 @@ import type {
   NewApiQueriesClient,
   NewApiQueryResult,
 } from '../adapters/newapi/newapi-queries-client';
+import type { NewApiStatusClient } from '../adapters/newapi/newapi-status-client';
 
 type AccountRepositoryPort = Pick<AccountRepository, 'get'>;
 type AuthStateRepositoryPort = Pick<AccountAuthStateRepository, 'getSiteUserId'>;
 type SnapshotRepositoryPort = Pick<SnapshotRepository, 'upsertLatest'>;
 type OperationRepositoryPort = Pick<OperationRepository, 'record'>;
 type QueriesClientPort = Pick<NewApiQueriesClient, 'query'>;
+type StatusClientPort = Pick<NewApiStatusClient, 'fetchStatus'>;
 
 const REFRESH_OPERATION_KIND = 'refresh';
 
 export interface RefreshServiceDependencies {
   queriesClient: QueriesClientPort;
+  statusClient: StatusClientPort;
   snapshotRepository: SnapshotRepositoryPort;
   operationRepository: OperationRepositoryPort;
   accountRepository: AccountRepositoryPort;
@@ -41,6 +44,7 @@ export interface RefreshServiceDependencies {
  */
 export class RefreshService {
   private readonly queriesClient: QueriesClientPort;
+  private readonly statusClient: StatusClientPort;
   private readonly snapshotRepository: SnapshotRepositoryPort;
   private readonly operationRepository: OperationRepositoryPort;
   private readonly accountRepository: AccountRepositoryPort;
@@ -49,6 +53,7 @@ export class RefreshService {
 
   constructor(dependencies: RefreshServiceDependencies) {
     this.queriesClient = dependencies.queriesClient;
+    this.statusClient = dependencies.statusClient;
     this.snapshotRepository = dependencies.snapshotRepository;
     this.operationRepository = dependencies.operationRepository;
     this.accountRepository = dependencies.accountRepository;
@@ -85,12 +90,19 @@ export class RefreshService {
     }
 
     let result: NewApiQueryResult;
+    let quotaPerUnit: number;
     try {
-      result = await this.queriesClient.query({
-        accountId,
-        baseUrl: account.baseUrl,
-        siteUserId,
-      });
+      // 并发执行用户数据查询与站点状态查询（汇率除数）
+      const [queryResult, statusResult] = await Promise.all([
+        this.queriesClient.query({
+          accountId,
+          baseUrl: account.baseUrl,
+          siteUserId,
+        }),
+        this.statusClient.fetchStatus(account.baseUrl),
+      ]);
+      result = queryResult;
+      quotaPerUnit = statusResult.quotaPerUnit; // 已 fallback 到 500000
     } catch {
       // 网络/请求异常：记 error 操作，绝不覆盖任何旧快照，绝不伪造业务数据。
       this.operationRepository.record({
@@ -119,11 +131,11 @@ export class RefreshService {
       wroteAny = true;
     }
     if (result.balance) {
-      this.writeSnapshot(accountId, 'balance', result.balance, result.balance.unit);
+      this.writeSnapshot(accountId, 'balance', { ...result.balance, quotaPerUnit }, result.balance.unit);
       wroteAny = true;
     }
     if (result.usage) {
-      this.writeSnapshot(accountId, 'usage', result.usage, result.usage.unit);
+      this.writeSnapshot(accountId, 'usage', { ...result.usage, quotaPerUnit }, result.usage.unit);
       wroteAny = true;
     }
 

@@ -58,8 +58,8 @@ export function DashboardPage(): React.JSX.Element {
         <div><dt>有效</dt><dd>{stats.active}</dd></div>
         <div><dt>已过期</dt><dd>{stats.expired}</dd></div>
         <div><dt>异常</dt><dd>{stats.error}</dd></div>
-        <div><dt>可安全聚合余额</dt><dd>{balance ? `${balance.value} ${balance.unit}` : '不可聚合'}</dd></div>
-        <div><dt>可安全聚合用量</dt><dd>{usage ? `${usage.value} ${usage.unit}` : '不可聚合'}</dd></div>
+        <div><dt>可安全聚合余额</dt><dd>{balance ? `$${balance.value.toFixed(2)}` : '不可聚合'}</dd></div>
+        <div><dt>可安全聚合用量</dt><dd>{usage ? `$${usage.value.toFixed(4)}` : '不可聚合'}</dd></div>
       </dl>
 
       <div className="dashboard-filters">

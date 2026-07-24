@@ -6,6 +6,7 @@ import { ElectronProbeClient } from './adapters/electron-probe-client';
 import { ElectronSessionRequestClient } from './adapters/electron-session-request-client';
 import { NewApiAdapter } from './adapters/newapi/newapi-adapter';
 import { NewApiQueriesClient } from './adapters/newapi/newapi-queries-client';
+import { NewApiStatusClient } from './adapters/newapi/newapi-status-client';
 import { NewApiKeysClient } from './adapters/newapi/newapi-keys-client';
 import { NewApiModelsClient } from './adapters/newapi/newapi-models-client';
 import { NewApiLogsClient } from './adapters/newapi/newapi-logs-client';
@@ -350,8 +351,10 @@ app.whenReady().then(async () => {
     operationRepository,
   });
   const queriesClient = new NewApiQueriesClient({ sessionClient });
+  const statusClient = new NewApiStatusClient(probeClient);
   const refreshService = new RefreshService({
     queriesClient,
+    statusClient,
     snapshotRepository,
     operationRepository,
     accountRepository,

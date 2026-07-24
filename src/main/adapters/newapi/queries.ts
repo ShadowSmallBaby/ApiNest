@@ -18,6 +18,8 @@ export interface BalanceSnapshot {
   remaining: number;
   /** 单位语义（NewAPI 以 quota 计）。 */
   unit: string;
+  /** quota → USD 汇率除数（用于换算美元金额）；缺失时显示层 fallback 到 500000。 */
+  quotaPerUnit?: number;
   source: string;
 }
 
@@ -26,6 +28,8 @@ export interface UsageSnapshot {
   /** 已用额度（NewAPI used_quota 语义原值）。 */
   used: number;
   unit: string;
+  /** quota → USD 汇率除数（用于换算美元金额）；缺失时显示层 fallback 到 500000。 */
+  quotaPerUnit?: number;
   source: string;
 }
 
